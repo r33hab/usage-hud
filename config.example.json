@@ -1,0 +1,148 @@
+{
+  "refreshSeconds": 60,
+  "pricingFeed": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
+  "theme": {
+    "scheme": "auto",
+    "density": "normal",
+    "width": 380,
+    "opacity": 1,
+    "radius": 14,
+    "vibrancy": "hudWindow",
+    "collapsed": false
+  },
+  "claude": {
+    "liveUsage": true,
+    "liveUsageSeconds": 120,
+    "limits": {
+      "resetWeekday": 0,
+      "resetHour": 20,
+      "sessionHours": 5,
+      "sessionUsd": null,
+      "weeklyUsd": null,
+      "weeklyFableUsd": null
+    }
+  },
+  "codex": {
+    "inputPerMTok": null,
+    "cachedInputPerMTok": null,
+    "outputPerMTok": null
+  },
+  "cards": [
+    {
+      "id": "claude",
+      "accent": "#e08a63",
+      "enabled": true,
+      "rows": [
+        {
+          "type": "header",
+          "title": "Claude",
+          "items": [
+            {
+              "type": "headline",
+              "metric": "claude.cost.today",
+              "sub": null
+            }
+          ]
+        },
+        {
+          "type": "banner",
+          "source": "claude.limit"
+        },
+        {
+          "type": "meter",
+          "gauge": "claude.session",
+          "style": "bar"
+        },
+        {
+          "type": "meter",
+          "gauge": "claude.weekly",
+          "style": "bar"
+        },
+        {
+          "type": "meter",
+          "gauge": "claude.weeklyFable",
+          "style": "bar"
+        },
+        {
+          "type": "row",
+          "items": [
+            {
+              "type": "chips",
+              "source": "claude.models.today",
+              "limit": 3
+            },
+            {
+              "type": "spark",
+              "series": "claude.activity.cost.14d"
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "metrics": [
+            "claude.reqs.today",
+            "claude.out.today",
+            "claude.cacheHit.today",
+            "claude.cost.month",
+            "claude.weeklyReset"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "codex",
+      "accent": "#3ecfa0",
+      "enabled": true,
+      "rows": [
+        {
+          "type": "header",
+          "title": "Codex",
+          "items": [
+            {
+              "type": "headline",
+              "metric": "codex.tokens.today",
+              "sub": null
+            }
+          ]
+        },
+        {
+          "type": "banner",
+          "source": "codex.limit"
+        },
+        {
+          "type": "meter",
+          "gauge": "codex.primary",
+          "style": "bar"
+        },
+        {
+          "type": "meter",
+          "gauge": "codex.secondary",
+          "style": "bar"
+        },
+        {
+          "type": "row",
+          "items": [
+            {
+              "type": "chips",
+              "source": "codex.models.today",
+              "limit": 2
+            },
+            {
+              "type": "spark",
+              "series": "codex.activity.tokens.14d"
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "metrics": [
+            "codex.turns.today",
+            "codex.tokens.quotaWeek",
+            "codex.plan",
+            "codex.quotaAge"
+          ]
+        }
+      ]
+    }
+  ]
+}

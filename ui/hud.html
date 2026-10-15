@@ -1,0 +1,2859 @@
+<meta charset="utf-8">
+<title>usage-hud</title>
+<style>
+  /* Palette: dark is the base, light is a full override keyed off data-scheme.
+     JS always resolves "auto" to a concrete value, so no media query is needed. */
+  :root {
+    --warn: #e8bb4d;
+    --danger: #f4676f;
+    --text: rgba(255, 255, 255, 0.96);
+    --dim: rgba(255, 255, 255, 0.58);
+    --faint: rgba(255, 255, 255, 0.34);
+    --hair: rgba(255, 255, 255, 0.10);
+    --track: rgba(255, 255, 255, 0.11);
+    --chip: rgba(255, 255, 255, 0.07);
+    --veil: rgba(16, 16, 18, 0.34);
+    --edit: #6ba8f5;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+
+    --pad-x: 12px;
+    --pad-y: 11px;
+    --gap: 9px;
+    --big: 20px;
+    --meter-h: 5px;
+    --name: 11px;
+    --small: 9.5px;
+  }
+  :root[data-scheme="light"] {
+    --warn: #a8760a;
+    --danger: #c8353f;
+    --text: rgba(0, 0, 0, 0.90);
+    --dim: rgba(0, 0, 0, 0.55);
+    --faint: rgba(0, 0, 0, 0.32);
+    --hair: rgba(0, 0, 0, 0.10);
+    --track: rgba(0, 0, 0, 0.10);
+    --chip: rgba(0, 0, 0, 0.05);
+    --veil: rgba(255, 255, 255, 0.30);
+    --edit: #1f6fd0;
+  }
+  :root[data-density="compact"] { --pad-y: 7px; --gap: 5px; --big: 17px; --meter-h: 4px; --name: 10px; }
+  :root[data-density="roomy"]   { --pad-y: 15px; --gap: 13px; --big: 23px; --meter-h: 7px; --name: 12px; }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: transparent;
+    color: var(--text);
+    font: 400 12px/1.35 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+    overflow: hidden;
+  }
+  #root {
+    background: var(--veil);
+    border: 0.5px solid var(--hair);
+    border-radius: var(--radius, 14px);
+    overflow: hidden;
+  }
+
+  /* ---------------------------------------------------------------- header */
+  #top {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 9px 8px 11px;
+    border-bottom: 0.5px solid var(--hair);
+  }
+  .title {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .age { font: 400 10px/1 var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; }
+  .spacer { flex: 1; }
+
+  button {
+    -webkit-appearance: none; appearance: none;
+    border: 0; background: transparent; color: var(--faint);
+    padding: 3px; margin: 0; border-radius: 5px; line-height: 0;
+    cursor: default; transition: color 0.12s, background 0.12s;
+  }
+  button:hover { color: var(--text); background: var(--chip); }
+  button.on { color: var(--edit); background: color-mix(in srgb, var(--edit) 16%, transparent); }
+  button svg { display: block; }
+  button.spin svg { animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ----------------------------------------------------------------- cards */
+  .card { padding: var(--pad-y) var(--pad-x); }
+  .card + .card { border-top: 0.5px solid var(--hair); }
+  .card[data-off="1"] { display: none; }
+  body.editing .card[data-off="1"] { display: block; opacity: 0.4; }
+
+  .rows > .wrap + .wrap { margin-top: 3px; }
+  .rows > .wrap.row-header + .wrap { margin-top: var(--gap); }
+  .wrap.row-hidden { display: none; }
+  body.editing .wrap.row-hidden { display: block; opacity: 0.34; }
+
+  /* ------------------------------------------------------------- minimised */
+  /* Minimising keeps one kind of component and stands the rest down. "bars" is
+     the default: the gauges are the reason the panel exists. A banner that is
+     actually firing is never hidden, whatever the mode, and the title strip
+     fades back in on hover so there is always a way out. Edit mode expands the
+     panel in applyTheme(), so no rule here has to make room for it. */
+  :root[data-collapsed="1"] #top { padding: 4px 6px 4px 9px; }
+  :root[data-collapsed="1"] .title, :root[data-collapsed="1"] .age { display: none; }
+  :root[data-collapsed="1"] #top button { opacity: 0.35; transition: opacity 0.15s, color 0.12s, background 0.12s; }
+  :root[data-collapsed="1"] #root:hover #top button { opacity: 1; }
+  :root[data-collapsed="1"] .card { padding-top: 6px; padding-bottom: 6px; }
+  :root[data-collapsed="1"] .rows > .wrap { display: none; }
+  :root[data-collapsed="1"] .rows > .wrap + .wrap { margin-top: 2px; }
+  :root[data-collapsed="1"] .rows > .wrap:has(.banner.on.urgent):not(.row-hidden) { display: block; }
+
+  :root[data-collapsed="1"][data-cmode="bars"]    .rows > .wrap[data-meter="1"]:not(.row-hidden),
+  :root[data-collapsed="1"][data-cmode="both"]    .rows > .wrap[data-meter="1"]:not(.row-hidden),
+  :root[data-collapsed="1"][data-cmode="headers"] .rows > .wrap.row-header:not(.row-hidden),
+  :root[data-collapsed="1"][data-cmode="both"]    .rows > .wrap.row-header:not(.row-hidden) { display: block; }
+  /* in bars mode a row survives only for the meters inside it */
+  :root[data-collapsed="1"][data-cmode="bars"] .wrap[data-meter="1"] .wrap:not([data-meter="1"]) { display: none; }
+  :root[data-collapsed="1"][data-cmode="bars"] .wrap.row-header[data-meter="1"] .cname { display: none; }
+
+  /* header row */
+  .rh { display: flex; align-items: baseline; gap: 6px; }
+  .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 7px color-mix(in srgb, var(--accent) 65%, transparent);
+    /* Follows the card name's baseline, so it stays beside the name when the
+       header's items wrap onto a second line. */
+    align-self: baseline; margin-bottom: 1px; flex: none;
+  }
+  .cname {
+    font-size: var(--name); font-weight: 600; letter-spacing: 0.05em;
+    text-transform: uppercase; color: var(--dim); white-space: nowrap;
+  }
+
+  /* headline */
+  .headline { display: flex; align-items: baseline; gap: 4px; }
+  .big { font: 600 var(--big)/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .bigsub { font-size: 10px; color: var(--faint); white-space: nowrap; }
+  /* A header too narrow for its numbers side by side (fitHeaders decides) puts
+     each caption under its number, so the numbers stay on one row and level. */
+  .rh.tight .headline { flex-direction: column; align-items: flex-end; gap: 0; }
+  .rh.tight .bigsub { line-height: 1.1; }
+
+  /* bar meter */
+  .meter { display: grid; grid-template-columns: 24px 1fr 33px auto; align-items: center; gap: 8px; padding: 2.5px 0; }
+  .mlabel { font: 500 9.5px/1 var(--mono); color: var(--faint); text-transform: uppercase; }
+  .track { height: var(--meter-h); border-radius: 3px; background: var(--track); overflow: hidden; }
+  .fill {
+    display: block; height: 100%; border-radius: 3px; width: 0;
+    background-color: var(--bar, var(--accent));
+    background-image: linear-gradient(90deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0));
+    transition: width 0.5s cubic-bezier(0.22, 0.8, 0.3, 1), background-color 0.3s;
+  }
+  .pct { font: 500 11px/1 var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+  .pct.na { color: var(--faint); }
+  .mnote {
+    font: 400 var(--small)/1 var(--mono); color: var(--faint);
+    font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; min-width: 70px;
+  }
+
+  /* ring meter */
+  .ringwrap { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 2px 0; }
+  .ringwrap svg { display: block; }
+  .ringlabel { font: 500 9px/1 var(--mono); color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; }
+  .ringnote { font: 400 8.5px/1 var(--mono); color: var(--faint); }
+
+  /* chips, sparkline, stat, banner, text */
+  .chips { display: flex; gap: 4px; flex: 1; min-width: 0; overflow: hidden; }
+  .chip {
+    flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    font: 500 var(--small)/1 var(--mono); padding: 3px 5px; border-radius: 4px;
+    background: var(--chip); color: var(--dim); white-space: nowrap;
+  }
+  .chip b { color: var(--accent); font-weight: 600; }
+  .spark { flex: none; }
+  .stat {
+    font: 400 var(--small)/1.5 var(--mono); color: var(--faint);
+    font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .label { font: 500 var(--small)/1.4 var(--mono); color: var(--dim); letter-spacing: 0.04em; }
+  /* month by month: one grid, so the bars line up whatever the labels' width */
+  .mlist {
+    display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 3px 8px;
+    font: 400 var(--small)/1.25 var(--mono); font-variant-numeric: tabular-nums; color: var(--dim);
+  }
+  .mrow { display: contents; }
+  .mmon { color: var(--faint); text-transform: uppercase; white-space: nowrap; }
+  .mtrack { height: 3px; border-radius: 2px; background: var(--track); overflow: hidden; }
+  .mtrack i { display: block; height: 100%; border-radius: 2px; background: var(--accent); opacity: 0.42; }
+  .mval { text-align: right; white-space: nowrap; }
+  .mrow.now .mtrack i { opacity: 1; }
+  .mrow.now .mval { color: var(--text); }
+  .divider { height: 0.5px; background: var(--hair); margin: 5px 0; }
+
+  /* --------------------------------------------------------------- history */
+  /* The usage history view takes the cards' place; the title bar stays. A big
+     number, sparkline or history list on the panel opens it on its value, so
+     those light up under the mouse. */
+  #history { display: none; }
+  body.history #cards { display: none; }
+  body.history #history { display: block; flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--pad-y) var(--pad-x) calc(var(--pad-y) + 2px); }
+  body:not(.customizing) #cards .wrap[data-history]:hover { background: var(--chip); box-shadow: 0 0 0 3px var(--chip); border-radius: 3px; }
+  .hhead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 10px; }
+  .hhead select { flex: 0 1 auto; min-width: 70px; }
+  .hhead select {
+    font: 400 10px/1.3 var(--mono); max-width: 130px; padding: 2px 17px 2px 5px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M.5.5 4 4 7.5.5' fill='none' stroke='%23888' stroke-width='1.2'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 6px center;
+  }
+  .hback { margin-left: -4px; }
+  .hsum { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; }
+  .hsum > .seg { margin-left: auto; }
+  .hfig { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .hmid { font: 600 13px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--dim); }
+  .hpace { font: 400 var(--small)/1.4 var(--mono); color: var(--dim); margin-top: 7px; }
+  .hpace b { font-weight: 600; color: var(--text); }
+  .hreadout { margin: 11px 0 5px; font: 400 var(--small)/1.3 var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .hchart svg { display: block; overflow: visible; width: 100%; height: auto; }
+  .hchart text { font: 400 8.5px var(--mono); fill: var(--faint); }
+  .hchart text.cur { fill: var(--text); }
+  .hbar .b { fill: var(--accent); opacity: 0.45; transition: opacity 0.12s; }
+  .hbar.cur .b { opacity: 1; }
+  .hbar.partial .b { opacity: 0.22; }
+  .hbar.hot .b { opacity: 0.85; }
+  .hbar.cur.hot .b { opacity: 1; }
+  .hline { fill: none; stroke: var(--accent); stroke-width: 1; opacity: 0.16; stroke-linejoin: round; stroke-linecap: round; transition: opacity 0.12s; }
+  .hline.last { opacity: 0.5; stroke-width: 1.4; }
+  .hline.cur { opacity: 1; stroke-width: 2; }
+  .hline.hot { opacity: 0.95; stroke-width: 1.8; }
+  .havg { fill: none; stroke: var(--text); opacity: 0.5; stroke-width: 1.1; stroke-dasharray: 3 3; }
+  .hlegend { display: flex; flex-wrap: wrap; gap: 3px 11px; margin-top: 6px; font: 400 9px/1.2 var(--mono); color: var(--faint); }
+  .hlegend i { display: inline-block; width: 12px; vertical-align: middle; margin: -2px 4px 0 0; border-top: 2px solid var(--accent); }
+  .hlegend i.last { opacity: 0.5; }
+  .hlegend i.older { opacity: 0.25; border-top-width: 1px; }
+  .hlegend i.avg { border-top: 1.5px dashed var(--text); opacity: 0.6; }
+  .hlist { grid-template-columns: auto 1fr auto 46px; margin-top: 11px; }
+  .hlist .mrow > * { padding: 1px 0; }
+  .hlist .mrow.hot > * { color: var(--text); }
+  .hlist .mrow.hot .mtrack i { opacity: 0.85; }
+  .hlist .mrow.partial .mtrack i { opacity: 0.22; }
+  .hlist .mmon small { font-size: inherit; color: var(--faint); opacity: 0.8; text-transform: none; margin-left: 4px; }
+  .hchg { text-align: right; white-space: nowrap; color: var(--faint); }
+  .hnote { font: 400 9px/1.45 var(--mono); color: var(--faint); margin-top: 10px; }
+  .hempty { font: 400 var(--small)/1.5 var(--mono); color: var(--dim); padding: 14px 0; }
+  .banner {
+    display: none; align-items: center; gap: 6px; padding: 5px 7px; border-radius: 6px;
+    font: 500 10px/1.25 var(--mono);
+    background: color-mix(in srgb, var(--tone, var(--danger)) 17%, transparent);
+    border: 0.5px solid color-mix(in srgb, var(--tone, var(--danger)) 40%, transparent);
+    color: var(--tone, var(--danger));
+  }
+  .banner.on { display: flex; }
+  body.editing .banner { display: flex; opacity: 0.55; }
+
+  .hrow { display: flex; align-items: center; gap: 8px; }
+  .hrow > .wrap { min-width: 0; }
+  /* Header items share the big numbers' baseline. min-width lets the row be
+     squeezed instead of overflowing the card, which is what fitHeaders detects. */
+  .rh > .hrow { align-items: baseline; min-width: 0; }
+  .hrow > .wrap[data-type="chips"], .hrow > .wrap[data-type="stat"], .hrow > .wrap[data-type="months"] { flex: 1; }
+  .hrow > .wrap[data-type="meter"] { flex: 1; }
+  .hrow > .wrap[data-type="meter"]:has(.ringwrap) { flex: 0 0 auto; }
+
+  /* The customization workspace has its own bounded, scrollable regions. */
+  #root { display: flex; flex-direction: column; max-height: var(--available-height, 740px); }
+  #top, #custom-head, #custom-tabs, #workspace-note, #custom-foot { flex: none; }
+  #cards { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+  #custom-head, #custom-tabs, #workspace-note, #custom-foot, #inspector, #preview-pane { display: none; }
+  body.customizing #root { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); grid-template-rows: auto auto auto minmax(60px, 1fr) auto auto auto; --pad-y: 11px; --gap: 9px; height: min(640px, var(--available-height, 740px)); border-radius: 14px; background: var(--workspace); }
+  :root { --workspace: #1c1e22; --surface: rgba(255,255,255,.035); }
+  :root[data-scheme="light"] { --workspace: #f6f7f9; --surface: rgba(0,0,0,.025); }
+  body.customizing #top { display: none; }
+  body.customizing #custom-head { display: flex; align-items: center; gap: 12px; padding: 17px 18px 14px; }
+  .custom-title { font-size: 16px; font-weight: 600; letter-spacing: -.025em; }
+  .custom-subtitle { font-size: 11px; color: var(--dim); margin-top: 3px; }
+  #b-done { padding: 9px 16px; background: var(--edit); color: #fff; font: 600 12px/1 system-ui; border-radius: 7px; }
+  body.customizing #custom-tabs { display: flex; gap: 4px; padding: 0 18px 12px; border-bottom: 1px solid var(--hair); }
+  #custom-tabs button { flex: 1; padding: 8px 10px; font: 500 12px/1 system-ui; color: var(--dim); border-radius: 6px; }
+  #custom-tabs button[aria-pressed="true"] { color: var(--text); background: var(--chip); }
+  body.customizing #workspace-note { display: block; padding: 10px 18px; color: var(--dim); font-size: 11px; }
+  body.customizing #cards { flex: 1; }
+  body.customizing:not([data-tab="layout"]) #cards { display: none; }
+  body.customizing #custom-foot { display: flex; align-items: center; gap: 10px; padding: 10px 18px; margin-top: auto; border-top: 1px solid var(--hair); color: var(--dim); font-size: 10px; }
+  #custom-foot .mini { font: 500 11px/1 system-ui; padding: 6px 8px; }
+  body.editing .card { padding: 8px 14px 12px; }
+  body.editing .card[data-off="1"] { opacity: 1; }
+  .wrap { position: relative; }
+  .outline-row, .grip { display: none; }
+  body.editing .rows > .wrap + .wrap { margin-top: 2px; }
+  body.editing .wrap { margin: 2px 0; border-radius: 6px; }
+  body.editing .wrap.row-hidden { opacity: 1; }
+  body.editing .outline-row { display: flex; align-items: center; min-height: 33px; padding-left: 22px; border-radius: 6px; }
+  body.editing .outline-row:hover { background: var(--surface); }
+  body.editing .wrap.selected > .outline-row { background: color-mix(in srgb, var(--edit) 15%, transparent); box-shadow: inset 2px 0 var(--edit); }
+  .outline-select { display: flex; gap: 8px; align-items: center; flex: 1; min-width: 0; text-align: left; padding: 9px 8px 9px 4px; font: 400 12px/1.2 system-ui; color: var(--text); }
+  .outline-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .outline-kind { color: var(--faint); font-size: 10px; flex: none; }
+  .outline-hidden { color: var(--dim); font-size: 10px; padding-right: 8px; }
+  body.editing .grip { display: flex; align-items: center; justify-content: center; position: absolute; top: 0; left: 3px; width: 20px; height: 33px; color: var(--faint); cursor: grab; z-index: 1; }
+  body.editing .grip:hover { color: var(--edit); }
+  .wrap.dragging { opacity: .45; }
+  .zone-hot { outline: 1px dashed var(--edit); outline-offset: 1px; border-radius: 6px; }
+  body.editing .wrap > .body { display: none; }
+  body.editing .wrap[data-type="row"] > .body, body.editing .wrap[data-type="header"] > .body { display: block; }
+  body.editing .hrow, body.editing .rh { display: block; }
+  body.editing .rh > :not(.hrow) { display: none; }
+  body.editing [data-dropzone="nested"] { margin: 0 0 3px 16px; padding-left: 6px; border-left: 1px solid var(--hair); min-height: 12px; }
+  body.editing [data-dropzone="nested"]:empty::before { content: "Drop a component here"; color: var(--faint); font-size: 10px; padding: 4px; }
+  .body { min-width: 0; }
+  .ctl, .hint { display: none; }
+  body.editing #inspector { display: block; flex: 0 1 auto; min-height: 0; max-height: min(250px, calc(50% - 90px)); overflow: auto; overscroll-behavior: contain; padding: 14px 18px; border-top: 1px solid var(--hair); background: var(--surface); }
+  .inspector-title { font-size: 12px; font-weight: 600; margin-bottom: 10px; }
+  #inspector .ctl { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  #inspector .control-field { flex: 1 1 160px; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+  .control-label { color: var(--dim); font-size: 11px; }
+  #inspector select, #inspector input[type="text"] { width: 100%; max-width: none !important; min-height: 30px; padding: 6px 8px; font: 400 12px/1.3 system-ui; border-radius: 6px; }
+  .control-actions { display: flex; gap: 6px; flex-basis: 100%; padding-top: 3px; flex-wrap: wrap; }
+  #inspector .mini { font: 500 11px/1 system-ui; padding: 7px 9px; }
+  #inspector .statchips { flex-basis: 100%; gap: 6px; }
+  #inspector .statchip { font: 400 11px/1.3 system-ui; padding: 5px 7px; width: 100%; min-width: 0; }
+  #inspector .statchip select:first-child { flex: 1; min-width: 0; }
+  #inspector .statchip .period-picker { width: 100px; flex: 0 0 100px; }
+  #inspector .danger { color: var(--danger); margin-left: auto; }
+  #inspector .hint { display: block; font: 400 11px/1.5 system-ui; color: var(--dim); margin-top: 10px; }
+  #inspector .hint b { font-weight: 500; }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--edit); outline-offset: 2px; }
+  body.customizing * { scrollbar-width: thin; scrollbar-color: var(--track) transparent; }
+  body.customizing #custom-head { grid-column: 1 / -1; grid-row: 1; }
+  body.customizing #custom-tabs { grid-column: 1; grid-row: 2; }
+  body.customizing #workspace-note { grid-column: 1; grid-row: 3; }
+  body.customizing #cards { grid-column: 1; grid-row: 4; }
+  body.customizing #drawer { grid-column: 1; grid-row: 4 / 6; }
+  body.customizing #inspector { grid-column: 1; grid-row: 5; max-height: min(230px, calc((var(--available-height, 740px) - 190px) / 2)); }
+  body.customizing #err { grid-column: 1; grid-row: 6; }
+  body.customizing #custom-foot { grid-column: 1 / -1; grid-row: 7; margin-top: 0; }
+  body.customizing #preview-pane { display: flex; flex-direction: column; grid-column: 2; grid-row: 2 / 7; min-width: 0; min-height: 0; border-left: 1px solid var(--hair); background: var(--surface); }
+  .preview-heading { display: flex; flex: none; align-items: center; gap: 8px; padding: 7px 14px 12px; }
+  .preview-title { font-size: 11px; font-weight: 600; color: var(--dim); }
+  .preview-heading .mini { font: 500 10px/1 system-ui; padding: 6px 8px; }
+  #preview-viewport { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 14px; background: linear-gradient(145deg, var(--chip), transparent); }
+  #preview-size { position: relative; margin: 0 auto; }
+  #live-preview { display: block; position: absolute; left: 0; top: 0; transform-origin: top left; pointer-events: none; }
+  #preview-caption { flex: none; margin: 0; padding: 10px 14px; color: var(--faint); font-size: 10px; }
+  @media (max-width: 719px) {
+    body.customizing #root { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(60px, 1fr) auto auto auto; }
+    body.customizing #preview-pane { grid-column: 1; grid-row: 2; height: min(150px, calc(var(--available-height, 740px) * .24)); border-left: 0; border-bottom: 1px solid var(--hair); }
+    .preview-heading { padding: 3px 14px 6px; }
+    #preview-viewport { padding: 6px 14px; }
+    #preview-caption { display: none; }
+    body.customizing #custom-tabs { grid-row: 3; padding-top: 8px; }
+    body.customizing #workspace-note { display: none; }
+    body.customizing #inspector { max-height: min(180px, calc(var(--available-height, 740px) * .33 - 50px)); }
+  }
+
+
+  select, input[type="number"], input[type="text"] {
+    -webkit-appearance: none; appearance: none;
+    background: var(--chip); color: var(--text); border: 0.5px solid var(--hair);
+    border-radius: 4px; padding: 2px 4px; font: 400 9.5px/1.3 var(--mono);
+    max-width: 152px; outline: none;
+  }
+  input[type="color"] {
+    -webkit-appearance: none; appearance: none; border: 0; background: transparent;
+    width: 18px; height: 14px; padding: 0; border-radius: 3px; overflow: hidden;
+  }
+  input[type="range"] { -webkit-appearance: none; appearance: none; background: transparent; height: 12px; width: 108px; }
+  input[type="range"]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: var(--track); }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 10px; height: 10px; border-radius: 50%;
+    background: var(--edit); margin-top: -3.5px;
+  }
+  .seg { display: flex; gap: 2px; background: var(--chip); border-radius: 5px; padding: 2px; }
+  .seg button { font: 500 9px/1 var(--mono); padding: 3px 6px; line-height: 1; color: var(--faint); }
+  .seg button.sel { background: color-mix(in srgb, var(--edit) 22%, transparent); color: var(--text); }
+
+  .cardedit {
+    display: none; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 6px;
+    padding-top: 6px; border-top: 0.5px dashed var(--hair);
+  }
+  body.editing .cardedit { display: flex; margin: 0 0 7px; padding: 0 0 7px; border-top: 0; border-bottom: 1px solid var(--hair); }
+  .cardedit-title { flex: 1; font-size: 11px; font-weight: 600; color: var(--dim); }
+  body.editing .cardedit .mini { font: 500 10px/1 system-ui; padding: 6px; }
+  .mini {
+    font: 500 9px/1 var(--mono); color: var(--dim); background: var(--chip);
+    padding: 4px 6px; border-radius: 4px; letter-spacing: 0.03em;
+  }
+  .mini:hover { color: var(--text); }
+  .palette { display: none; flex-basis: 100%; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .palette.open { display: flex; }
+  .palette .mini { background: color-mix(in srgb, var(--edit) 15%, var(--chip)); }
+  .palette .mini:hover { background: color-mix(in srgb, var(--edit) 32%, var(--chip)); color: var(--text); }
+  .mini.armed { background: color-mix(in srgb, var(--edit) 26%, transparent); color: var(--text); }
+  .mini[disabled] { opacity: 0.28; }
+
+  .statchips { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; }
+  .statchip { display: flex; align-items: center; gap: 3px; font: 400 9px/1 var(--mono); background: var(--chip); border-radius: 4px; padding: 3px 4px; color: var(--dim); }
+  .statchip button { padding: 0 2px; font-size: 10px; line-height: 1; }
+
+  /* ---------------------------------------------------------------- drawer */
+  #drawer { display: none; border-top: 0.5px solid var(--hair); padding: var(--pad-y) var(--pad-x); }
+  #drawer.open { display: block; flex: 1; min-height: 0; overflow: auto; padding: 4px 18px 16px; border: 0; }
+  #drawer .field { grid-template-columns: 82px minmax(0, 1fr) auto; padding: 10px 0; gap: 8px; border-bottom: 1px solid var(--hair); }
+  #drawer .fname { font: 500 12px/1.3 system-ui; color: var(--text); text-transform: none; letter-spacing: 0; }
+  #drawer .fhint { font: 400 11px/1.45 system-ui; padding: 0; color: var(--dim); }
+  #drawer .seg { flex-wrap: wrap; }
+  #drawer .seg button { flex: 1; font: 500 11px/1 system-ui; padding: 7px; }
+  #drawer select { font: 400 12px/1.3 system-ui; padding: 6px; max-width: 100%; }
+  #drawer input[type="range"] { width: 100%; min-width: 50px; }
+  .drawerfoot { flex-wrap: wrap; }
+  #drawer input[type="text"] { width: 100%; min-width: 0; font: 400 12px/1.3 system-ui; padding: 6px 8px; border-radius: 6px; }
+  #drawer .field .mini, .saved-row .mini { font: 500 11px/1 system-ui; padding: 7px 9px; }
+  .saved-row { display: flex; align-items: center; gap: 6px; padding: 9px 0; border-bottom: 1px solid var(--hair); }
+  .saved-text { flex: 1; min-width: 0; }
+  .saved-name { font: 500 12px/1.3 system-ui; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .saved-date { font: 400 10px/1.4 system-ui; color: var(--dim); }
+  .saved-row .danger { color: var(--danger); }
+  .saved-empty { padding: 12px 0; font: 400 11px/1.45 system-ui; color: var(--dim); }
+  .field { display: grid; grid-template-columns: 74px 1fr auto; align-items: center; gap: 8px; padding: 3px 0; }
+  .field > select { justify-self: start; }
+  .fname { font: 500 9.5px/1 var(--mono); color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; }
+  .fval { font: 400 9.5px/1 var(--mono); color: var(--dim); font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
+  .fhint { grid-column: 2 / -1; font: 400 9px/1.4 var(--mono); color: var(--faint); padding: 0 0 5px; }
+  .drawerfoot { display: flex; gap: 5px; margin-top: 8px; padding-top: 8px; border-top: 0.5px dashed var(--hair); }
+
+  #err {
+    display: none; padding: 10px 12px; font: 400 10px/1.4 var(--mono); color: var(--danger);
+    border-top: 0.5px solid var(--hair); white-space: pre-wrap; word-break: break-all;
+    max-height: 110px; overflow: auto;
+  }
+  #err.on { display: block; }
+</style>
+
+<div id="root">
+  <div id="top">
+    <span class="title">usage</span>
+    <span class="age" id="age">—</span>
+    <span class="spacer"></span>
+    <button id="b-refresh" title="Refresh now">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+        <path d="M13.5 8a5.5 5.5 0 1 1-1.9-4.2"/><path d="M13.6 2.2v2.6h-2.6"/>
+      </svg>
+    </button>
+    <button id="b-history" title="History: week by week and month by month, as bars or laid over each other (Esc goes back)" aria-pressed="false">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+        <path d="M3 13.5V9.5M8 13.5V3M13 13.5V6.5"/>
+      </svg>
+    </button>
+    <button id="b-collapse" title="Minimise: keep the gauge bars only (Appearance sets what stays)">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+        <path d="M2.5 5.5h11M2.5 10.5h11"/>
+      </svg>
+    </button>
+    <button id="b-edit" title="Edit layout: move, swap, hide, add or remove components">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M11.2 2.4l2.4 2.4-8 8H3.2v-2.4z"/>
+      </svg>
+    </button>
+    <button id="b-drawer" title="Appearance: theme, density, size, minimised mode, refresh">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <circle cx="8" cy="8" r="2.1"/>
+        <path d="M8 1.6v1.8M8 12.6v1.8M1.6 8h1.8M12.6 8h1.8M3.6 3.6l1.3 1.3M11.1 11.1l1.3 1.3M12.4 3.6l-1.3 1.3M4.9 11.1l-1.3 1.3"/>
+      </svg>
+    </button>
+    <button id="b-hide" title="Hide (menu bar icon brings it back)">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+        <path d="M4 4l8 8M12 4l-8 8"/>
+      </svg>
+    </button>
+  </div>
+
+  <div id="custom-head">
+    <div><div class="custom-title">Customize your HUD</div><div class="custom-subtitle">Make room for what matters to you.</div></div>
+    <span class="spacer"></span><button id="b-done">Done</button>
+  </div>
+  <div id="custom-tabs" aria-label="Customization sections">
+    <button data-tab="layout" aria-pressed="true">Layout</button>
+    <button data-tab="appearance" aria-pressed="false">Appearance</button>
+    <button data-tab="saved" aria-pressed="false">Saved</button>
+  </div>
+  <div id="workspace-note"></div>
+  <div id="cards"></div>
+  <div id="history" aria-label="Usage history"></div>
+  <div id="drawer"></div>
+  <div id="inspector"></div>
+  <aside id="preview-pane" aria-label="Live HUD preview">
+    <div class="preview-heading"><span class="preview-title">Live preview</span><span class="spacer"></span><button id="b-preview-collapse" class="mini" aria-pressed="false">Minimised</button></div>
+    <div id="preview-viewport"><div id="preview-size"><div id="live-preview" inert></div></div></div>
+    <p id="preview-caption"></p>
+  </aside>
+  <div id="err"></div>
+  <div id="custom-foot"><span id="save-status" role="status">Changes saved automatically</span><span class="spacer"></span><button class="mini" id="b-undo">Undo last change</button></div>
+</div>
+
+<script>
+"use strict";
+
+// =========================================================== bridge & state
+
+const $ = (id) => document.getElementById(id);
+const bridge = (msg) => {
+  try { window.webkit.messageHandlers.hud.postMessage(msg); } catch (e) { /* browser preview */ }
+};
+
+const state = {
+  data: null,
+  config: null,
+  editing: false,
+  customizing: false,
+  tab: "layout",
+  selected: null,
+  previewCollapsed: false,
+  undo: [],
+  drawer: false,
+  savePending: false,
+  saved: [],
+};
+let updaters = [];
+
+const now = () => Math.floor(Date.now() / 1000);
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+};
+
+// ================================================================ formatters
+
+const FMT = {
+  money(v) {
+    if (v == null) return "—";
+    if (v >= 10000) return "$" + (v / 1000).toFixed(0) + "k";
+    if (v >= 1000) return "$" + (v / 1000).toFixed(1) + "k";
+    if (v >= 100) return "$" + v.toFixed(0);
+    return "$" + v.toFixed(2);
+  },
+  moneyTight(v) {
+    if (v == null) return "—";
+    if (v >= 1000) return "$" + (v / 1000).toFixed(1) + "k";
+    if (v >= 100) return "$" + v.toFixed(0);
+    return "$" + v.toFixed(v >= 10 ? 1 : 2);
+  },
+  tok(v) {
+    if (v == null) return "—";
+    if (v >= 1e9) return (v / 1e9).toFixed(2) + "B";
+    if (v >= 1e6) return (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + "M";
+    if (v >= 1e3) return Math.round(v / 1e3) + "k";
+    return String(v);
+  },
+  int(v) { return v == null ? "—" : String(Math.round(v)); },
+  pct(v) { return v == null ? "—" : Math.round(v * 100) + "%"; },
+  text(v) { return v == null || v === "" ? "—" : String(v); },
+  dur(sec) {
+    if (sec == null) return "—";
+    if (sec < 0) sec = 0;
+    if (sec < 60) return Math.round(sec) + "s";
+    const m = Math.floor(sec / 60);
+    if (m < 60) return m + "m";
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + "h" + String(m % 60).padStart(2, "0");
+    const d = Math.floor(h / 24);
+    return d + "d" + (h % 24) + "h";
+  },
+};
+
+// ============================================== metric / gauge / series registry
+// Everything the UI can show is registered here. Adding an entry makes it
+// available in every picker in the editor, with no other changes.
+
+const cacheHit = (bin) => {
+  const total = bin.cacheRead + bin.cacheWrite + bin.in;
+  return total ? bin.cacheRead / total : null;
+};
+
+// One rule for everything that measures usage: every quantity can be shown for
+// every window, and the windows are the same for both providers, so a picker
+// never has to explain why a choice exists for one value and not another.
+// Ids are "<provider>.<quantity>.<window>"; the ids older layouts were saved
+// with are aliases of the same entries, so nothing on disk stops working.
+
+const PROVIDERS = { claude: "Claude", codex: "Codex" };
+const per = (v, provider) => (v && typeof v === "object" ? v[provider] : v);
+
+// Windows a value or a model breakdown can cover. Calendar windows are local
+// time and weeks start on Monday; the others are the providers' own windows.
+const WINDOWS = {
+  daily:     { suffix: "today",        label: "Daily",       caption: "today",       unit: "day", desc: "Since midnight, local time." },
+  weekly:    { suffix: "calendarWeek", label: "Weekly",      caption: "this week",   unit: "wk",  desc: "Since Monday at midnight, local time." },
+  monthly:   { suffix: "month",        label: "Monthly",     caption: "this month",  unit: "mo",  desc: "Since the first of the month, local time." },
+  lastWeek:  { suffix: "lastWeek",     label: "Last week",   caption: "last week",   unit: "last wk",  desc: "The previous calendar week, Monday to Sunday, local time, from the usage history kept on this Mac." },
+  lastMonth: { suffix: "lastMonth",    label: "Last month",  caption: "last month",  unit: "last mo",  desc: "The previous calendar month, local time, from the usage history kept on this Mac." },
+  session:   { suffix: "session",      label: { claude: "5h block", codex: "5h window" }, caption: { claude: "5h block", codex: "5h window" }, unit: "5h",
+               desc: { claude: "Claude's current 5-hour block, the window the 5h gauge tracks.",
+                       codex: "The last five hours, the length of Codex's short quota window." } },
+  quotaWeek: { suffix: "quotaWeek",    label: "Quota week",  caption: "quota week",  unit: "wk",
+               desc: { claude: "Claude's current weekly quota window, the window the weekly gauge tracks.",
+                       codex: "The last seven days, the length of Codex's weekly quota window." } },
+  rolling7d: { suffix: "7d",           label: "Last 7 days", caption: "last 7 days", unit: "7d",  desc: "The last seven times twenty-four hours." },
+};
+// The collector's aggregate behind each window. `months` and `weeks` are the
+// history, oldest first and the current one last; a period it holds nothing
+// about is null.
+const tracked = (period) => (period && period.tracked ? period : null);
+const WINDOW_BIN = {
+  claude: { daily: d => d.claude.periods.daily, weekly: d => d.claude.periods.weekly, monthly: d => d.claude.periods.monthly,
+            lastWeek: d => tracked(d.claude.weeks?.at(-2)), lastMonth: d => tracked(d.claude.months?.at(-2)),
+            session: d => d.claude.session, quotaWeek: d => d.claude.weekly, rolling7d: d => d.claude.window7d },
+  codex:  { daily: d => d.codex.periods.daily, weekly: d => d.codex.periods.weekly, monthly: d => d.codex.periods.monthly,
+            lastWeek: d => tracked(d.codex.weeks?.at(-2)), lastMonth: d => tracked(d.codex.months?.at(-2)),
+            session: d => d.codex.window, quotaWeek: d => d.codex.week, rolling7d: d => d.codex.window7d },
+};
+const usageBin = (d, provider, window) => { try { return WINDOW_BIN[provider][window](d) || null; } catch (e) { return null; } };
+
+// Spans a chart can draw, one bar per hour, day, week or month.
+const SPANS = {
+  daily:   { label: "Daily",        desc: "Today, one bar per hour since midnight." },
+  weekly:  { label: "Weekly",       desc: "This week, one bar per day since Monday." },
+  monthly: { label: "Monthly",      desc: "This month, one bar per day since the first." },
+  "7d":    { label: "Last 7 days",  desc: "One bar per day for the last seven days, today on the right." },
+  "14d":   { label: "Last 14 days", desc: "One bar per day for the last fourteen days, today on the right." },
+  "12wk":  { label: "Last 12 weeks", desc: "One bar per calendar week, Monday to Sunday, for the last twelve, this week on the right.",
+             bins: (d, provider) => (d[provider]?.weeks || []).map(tracked) },
+  "12mo":  { label: "Last 12 months", desc: "One bar per calendar month for the last twelve, this month on the right.",
+             bins: (d, provider) => (d[provider]?.months || []).map(tracked) },
+};
+const spanBins = (d, provider, span) => (SPANS[span].bins ? SPANS[span].bins(d, provider) : d[provider]?.activity?.[span]) || [];
+
+// [key in the collector's bin, label, format, unit]
+const QUANTITIES = {
+  claude: [
+    ["cost", "cost", "money", ""], ["fableCost", "Fable cost", "money", "fable"],
+    ["tokens", "total tokens", "tok", "tok"], ["reqs", "requests", "int", "req"],
+    ["in", "input tokens", "tok", "in"], ["out", "output tokens", "tok", "out"],
+    ["cacheRead", "cache reads", "tok", "cached"], ["cacheWrite", "cache writes", "tok", "written"],
+    ["cacheHit", "cache hit rate", "pct", "hit"],
+  ],
+  codex: [
+    ["cost", "estimated API cost", "money", ""], ["tokens", "total tokens", "tok", "tok"],
+    ["turns", "turns", "int", "turns"], ["in", "input tokens", "tok", "in"],
+    ["out", "output tokens", "tok", "out"], ["cached", "cached input", "tok", "cached"],
+    ["reasoning", "reasoning tokens", "tok", "think"], ["cacheHit", "cache hit rate", "pct", "hit"],
+  ],
+};
+const usageValue = (provider, key, bin) => {
+  if (!bin) return null;
+  if (key === "cacheHit") return provider === "claude" ? cacheHit(bin) : bin.in ? bin.cached / bin.in : null;
+  if (provider === "codex" && key === "cost" && bin.unpricedTokens && !bin.pricedTokens) return null;
+  return bin[key];
+};
+
+// Codex ids carry a vendor prefix the chip has no room for: gpt-6-astra reads
+// as 6-astra, codex-auto-review as auto-review.
+const codexChips = (list) => (list || []).map((m) => ({ ...m, name: m.name.replace(/^codex-/, "").replace(/^gpt-/, "") }));
+
+const METRICS = {}, SERIES = {}, CHIPSOURCES = {}, MONTHLY = {}, WEEKLY = {};
+// Per registry: family -> { window: id }. The pickers use it to change the
+// quantity without touching the window, and the window without touching the
+// quantity.
+const FAMILIES = new Map([[METRICS, {}], [SERIES, {}], [CHIPSOURCES, {}]]);
+function register(reg, id, item) {
+  reg[id] = { id, ...item };
+  const fam = FAMILIES.get(reg);
+  (fam[item.family] = fam[item.family] || {})[item.period] = id;
+}
+
+for (const [provider, name] of Object.entries(PROVIDERS)) {
+  for (const [key, quantity, fmt, unit] of QUANTITIES[provider]) {
+    const family = `${provider}.${key}`;
+    const captionPrefix = key === "cost" && provider === "codex" ? "API est. · " : unit ? unit + " · " : "";
+    for (const [window, w] of Object.entries(WINDOWS)) {
+      const wl = per(w.label, provider), wc = per(w.caption, provider), wd = per(w.desc, provider);
+      register(METRICS, `${family}.${w.suffix}`, {
+        family, provider, quantity, period: window, fmt,
+        label: `${name} · ${quantity} · ${wl}`, short: `${quantity} · ${wl}`,
+        unit: [unit, w.unit].filter(Boolean).join("/"),
+        caption: captionPrefix + wc,
+        desc: `${name} ${quantity}, ${wc}. ${wd}`, windowDesc: wd,
+        get: d => usageValue(provider, key, usageBin(d, provider, window)),
+        bin: d => usageBin(d, provider, window),
+      });
+    }
+    for (const [span, s] of Object.entries(SPANS)) {
+      register(SERIES, `${provider}.activity.${key}.${span}`, {
+        family, provider, quantity, period: span,
+        label: `${name} · ${quantity} · ${s.label}`, short: `${quantity} · ${s.label}`,
+        desc: `${name} ${quantity}. ${s.desc}`, windowDesc: s.desc,
+        get: d => spanBins(d, provider, span).map(bin => usageValue(provider, key, bin)),
+        note: d => provider === "codex" && key === "cost"
+          ? "Standard API estimate." + (spanBins(d, "codex", span).some(bin => bin?.unpricedTokens) ? " Partial: excludes usage without a published model price." : "")
+          : "",
+      });
+    }
+  }
+  for (const [reg, per, periods, what] of [[MONTHLY, "month", "months", "calendar month"], [WEEKLY, "week", "weeks", "calendar week, Monday to Sunday"]]) {
+    for (const [key, quantity, fmt] of QUANTITIES[provider]) {
+      reg[`${provider}.${key}`] = {
+        provider, key, quantity, fmt, per,
+        label: `${name} · ${quantity} by ${per}`,
+        desc: `${name} ${quantity} for each ${what}, newest first, from the usage history kept on this Mac.`,
+        get: d => d[provider]?.[periods] || [],
+      };
+    }
+  }
+  for (const [window, w] of Object.entries(WINDOWS)) {
+    const wl = per(w.label, provider), wc = per(w.caption, provider), wd = per(w.desc, provider);
+    register(CHIPSOURCES, `${provider}.models.${w.suffix}`, {
+      family: `${provider}.models`, provider, quantity: "models", period: window,
+      label: `${name} · models · ${wl}`, short: `models · ${wl}`,
+      desc: `Each ${name} model's share, by ${provider === "claude" ? "cost" : "tokens"}, ${wc}. ${wd}`, windowDesc: wd,
+      get: d => { const m = usageBin(d, provider, window)?.models || []; return provider === "codex" ? codexChips(m) : m; },
+    });
+  }
+}
+
+// Values that are a reading, not a total over a window.
+const STATUS = {
+  "claude.weeklyReset":  { label: "Claude · week resets in",     fmt: "dur",   unit: "to reset", caption: "to weekly reset", desc: "Time until Claude's weekly quota window resets.", get: (d) => d.claude.limits.resetsIn },
+  "claude.sessionReset": { label: "Claude · 5h block resets in", fmt: "dur",   unit: "to reset", caption: "to 5h reset", desc: "Time until Claude's current 5-hour block ends.", get: (d) => (d.claude.limits.sessionEnd ? d.claude.limits.sessionEnd - now() : null) },
+  "claude.quotaAge":     { label: "Claude · quota reading age",  fmt: "dur",   unit: "old",      caption: "since quota read", desc: "How long ago the Claude quota percentages were read.", get: (d) => (d.claude.usage ? now() - d.claude.usage.asOf : null) },
+  "claude.cap.weekly":   { label: "Claude · weekly cap",         fmt: "money", unit: "cap",      caption: "weekly cap", desc: "The dollar figure the weekly gauge treats as 100%.", get: (d) => d.claude.limits.caps.weekly },
+  "claude.cap.fable":    { label: "Claude · fable cap",          fmt: "money", unit: "cap",      caption: "fable cap", desc: "The dollar figure the Fable gauge treats as 100%.", get: (d) => d.claude.limits.caps.weeklyFable },
+  "claude.idle":         { label: "Claude · last request",       fmt: "dur",   unit: "ago",      caption: "since last request", desc: "Time since the last Claude Code request.", get: (d) => (d.claude.lastActivity ? now() - d.claude.lastActivity : null) },
+  "codex.plan":          { label: "Codex · plan",                fmt: "text",  unit: "",         caption: "plan", desc: "The plan Codex reports.", get: (d) => d.codex.limits && d.codex.limits.planType },
+  "codex.quotaAge":      { label: "Codex · quota age",           fmt: "dur",   unit: "old",      caption: "since quota read", desc: "How long ago Codex last logged its quota percentages.", get: (d) => (d.codex.limits ? now() - d.codex.limits.asOf : null) },
+  "codex.context":       { label: "Codex · context window",      fmt: "tok",   unit: "ctx",      caption: "context window", desc: "The context window of the model Codex last ran.", get: (d) => d.codex.contextWindow },
+  "codex.idle":          { label: "Codex · last turn",           fmt: "dur",   unit: "ago",      caption: "since last turn", desc: "Time since the last Codex turn.", get: (d) => (d.codex.lastActivity ? now() - d.codex.lastActivity : null) },
+  "meta.updated":        { label: "Meta · data age",             fmt: "dur",   unit: "ago",      caption: "since refresh", desc: "Time since the logs were last read.", get: (d) => (Date.now() - d.ts) / 1000 },
+  "meta.scan":           { label: "Meta · scan time",            fmt: "int",   unit: "ms",       caption: "last scan", desc: "How long the last log scan took.", get: (d) => d.meta && d.meta.elapsedMs },
+};
+for (const [id, item] of Object.entries(STATUS)) METRICS[id] = { id, short: item.label.slice(item.label.indexOf(" · ") + 3), ...item };
+
+// Ids older layouts were saved with: the same entries under their old names, so
+// a saved config keeps working and the pickers show it as the window it was.
+const ALIASES = {
+  "claude.cost.weekly": "claude.cost.quotaWeek",
+  "claude.cost.fable": "claude.fableCost.quotaWeek",
+  "codex.tokens.week": "codex.tokens.quotaWeek",
+  "codex.tokens.window": "codex.tokens.session",
+  "claude.models": "claude.models.today",
+  "claude.models.wk": "claude.models.quotaWeek",
+  "codex.models": "codex.models.today",
+  "codex.models.wk": "codex.models.quotaWeek",
+  "claude.daily.cost": "claude.activity.cost.14d",
+  "codex.daily.tokens": "codex.activity.tokens.14d",
+};
+for (const reg of [METRICS, SERIES, CHIPSOURCES]) {
+  for (const [alias, id] of Object.entries(ALIASES)) if (reg[id]) reg[alias] = reg[id];
+}
+/// A registry's entries under their own ids, aliases left out.
+const canonical = (reg) => Object.entries(reg).filter(([id, item]) => !item.id || item.id === id);
+
+function metricValue(id, d) {
+  const m = METRICS[id];
+  if (!m) return { text: "?" + id, value: null, unit: "", caption: "" };
+  let value = null;
+  try { value = m.get(d); } catch (e) { value = null; }
+  const bin = m.family === "codex.cost" && m.bin ? m.bin(d) : null;
+  const partial = bin?.unpricedTokens > 0;
+  const missing = partial ? Object.keys(bin.unpricedModels || {}).join(", ") : "";
+  // Last week or month can begin before the history does; its total is then a floor.
+  const per = { lastWeek: "week", lastMonth: "month" }[m.period];
+  const early = !!per && !!(m.bin && m.bin(d)?.partial);
+  const floor = (partial || early) && value != null && m.fmt !== "pct";
+  return {
+    text: FMT[m.fmt](value) + (floor ? "+" : ""), value, unit: m.unit,
+    caption: partial ? (value == null ? "price unavailable" : `${m.caption} · partial`) : early ? `${m.caption || m.unit} · partial` : m.caption || m.unit,
+    title: (m.family === "codex.cost"
+      ? `Estimated cost at standard published API rates, not your subscription bill. Excludes fast-mode, long-context and regional surcharges.${partial ? " No published price for: " + missing + "." : ""}`
+      : m.desc || m.label) + (early ? " " + historyPartial(per) : ""),
+  };
+}
+
+const historyPartial = (per) => `Partial: the ${per} began before the usage history, and some of its logs were already gone.`;
+// A history list shows months unless it was set to weeks.
+const historyList = (spec) => (spec.per === "week" ? WEEKLY : MONTHLY);
+
+/// ISO week number: week 1 holds the year's first Thursday.
+function isoWeek(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  d.setUTCDate(d.getUTCDate() + 3 - (d.getUTCDay() + 6) % 7);
+  return 1 + Math.floor((d - Date.UTC(d.getUTCFullYear(), 0, 1)) / 604800000);
+}
+
+// A gauge resolves to a fraction plus the text shown beside it.
+const GAUGES = {
+  "claude.session": {
+    label: "Claude · 5h block",
+    short: "5h",
+    desc: "Claude's 5-hour block. It starts with your first message after the last block ended, so it is not a rolling five hours.",
+    get: (d) => claudeGauge(d, "session"),
+  },
+  "claude.weekly": {
+    label: "Claude · weekly, all models",
+    short: "wk",
+    desc: "Claude's weekly allowance for every model except Fable. Fixed window with a published reset time.",
+    get: (d) => claudeGauge(d, "weekly"),
+  },
+  "claude.weeklyFable": {
+    label: "Claude · weekly, Fable",
+    short: "fbl",
+    desc: "Fable's own weekly allowance, counted separately from the other models.",
+    get: (d) => claudeGauge(d, "weeklyFable"),
+  },
+  "codex.primary": {
+    label: "Codex · short window",
+    short: "5h",
+    desc: "Codex's short rolling window (usually 5h), read from the percentages the Codex CLI logs itself.",
+    get: (d) => codexWindow(d, "primary"),
+  },
+  "codex.secondary": {
+    label: "Codex · weekly window",
+    short: "wk",
+    desc: "Codex's weekly window, read from the percentages the Codex CLI logs itself.",
+    get: (d) => codexWindow(d, "secondary"),
+  },
+};
+
+/// The collector resolves each gauge once (claude.gauges) so the panel and the
+/// menu bar agree. "usage" means the value is anchored to the percentage Claude
+/// Code cached from /usage, plus the spend since - the note shows the time to
+/// that window's reset, like the Codex gauges do for their real readings. The
+/// other sources are spend against a cap, and the note says which cap: one from
+/// the config, one derived from the last reading, or your own heaviest window,
+/// which is a different claim and is labelled "peak" so the two never blur.
+function claudeGauge(d, key) {
+  const g = d.claude.gauges && d.claude.gauges[key];
+  if (!g) return { pct: null, note: "no data" };
+  if (g.source === "usage") {
+    return { pct: g.pct, note: `${FMT.moneyTight(g.spend)} · ↻ ${FMT.dur(g.resetsAt - now())}` };
+  }
+  if (!g.source) return { pct: null, note: "not calibrated" };
+  return { pct: g.pct, note: `${FMT.moneyTight(g.spend)}/${FMT.moneyTight(g.cap)} ${g.source}` };
+}
+
+function codexWindow(d, key) {
+  const w = d.codex.limits && d.codex.limits[key];
+  if (!w) return { pct: null, note: "no data", short: key === "primary" ? "5h" : "wk" };
+  const short = w.windowMinutes >= 10080
+    ? "wk"
+    : w.windowMinutes % 60 === 0 ? w.windowMinutes / 60 + "h" : w.windowMinutes + "m";
+  if (w.expired) return { pct: null, note: "window reset", short };
+  return { pct: w.usedPercent / 100, note: "↻ " + FMT.dur(w.resetsAt - now()), short };
+}
+
+// The lowest-priority banner line: a price the community feed says has changed,
+// a model with no published price yet, or a feed that has stopped updating.
+function priceBanner(pricing, feed) {
+  const short = (m) => String(m).replace(/^claude-/, "");
+  const changed = (pricing && pricing.mismatches) || [];
+  if (changed.length) return { tone: "var(--warn)", text: `published price changed for ${changed.map((x) => short(x.model)).join(", ")} — update the table in collect.mjs` };
+  const estimated = (pricing && pricing.estimated) || [];
+  if (estimated.length) return { tone: "var(--warn)", text: `no published price for ${estimated.map((x) => short(x.model) + (x.as ? ` (priced as ${short(x.as)})` : "")).join(", ")}` };
+  if (feed && feed.enabled && feed.error && (!feed.fetchedAt || now() - feed.fetchedAt / 1000 > 3 * 86400)) return { tone: "var(--warn)", text: `price feed: ${feed.error}` };
+  return null;
+}
+
+const BANNERS = {
+  "claude.limit": {
+    label: "Claude · rate limit / quota reading",
+    desc: "Speaks up when a Claude limit is hit, the live quota fetch fails, a reading goes stale, or a model's price is estimated or out of date.",
+    get(d) {
+      const h = d.claude.limitHit;
+      if (h && !h.expired) {
+        const kind = h.type === "five_hour" ? "5-hour" : String(h.type).replace(/_/g, " ");
+        return { tone: "var(--danger)", text: `${kind} limit reached · resets in ${FMT.dur(h.resetsAt - now())}` };
+      }
+      const u = d.claude.usage;
+      const f = d.claude.usageFetch;
+      // The live fetch failing matters once the reading it should have replaced
+      // is going stale; a single missed poll is not worth a banner.
+      if (f && f.enabled && f.error && (!u || u.ageSec > 15 * 60)) return { tone: "var(--warn)", text: `live usage: ${f.error}` };
+      if (!u) {
+        const caps = d.claude.limits.caps || {};
+        if (caps.session || caps.weekly || caps.weeklyFable || (f && f.enabled)) return priceBanner(d.claude.pricing, d.pricingFeed);
+        return { tone: "var(--warn)", text: "run /usage in Claude Code once — gauges are estimates until then" };
+      }
+      if (u.ageSec > 24 * 3600) return { tone: "var(--warn)", text: `quota reading is ${FMT.dur(u.ageSec)} old — run /usage in Claude Code` };
+      return priceBanner(d.claude.pricing, d.pricingFeed);
+    },
+  },
+  "codex.limit": {
+    label: "Codex · quota warnings",
+    desc: "Speaks up when Codex reports a rate limit, when its quota reading is over six hours old, or when a bundled Codex price is out of date.",
+    get(d) {
+      const l = d.codex.limits;
+      if (!l) return priceBanner(d.codex.pricing);
+      if (l.reached) return { tone: "var(--danger)", text: `rate limit reached (${l.reached})` };
+      const age = now() - l.asOf;
+      if (age > 6 * 3600) return { tone: "var(--warn)", text: `quota reading is ${FMT.dur(age)} old — run Codex to refresh` };
+      return priceBanner(d.codex.pricing);
+    },
+  },
+};
+
+const barColor = (pct) => (pct >= 0.95 ? "var(--danger)" : pct >= 0.8 ? "var(--warn)" : "var(--accent)");
+
+// ============================================================ component types
+// What each kind of component actually is, in plain language. The editor prints
+// this under every component and hangs it off every palette button, so the
+// answer to "what is this and what does it do" is on screen instead of in the
+// README.
+
+const TYPES = {
+  header:   { label: "card header",  desc: "the card's name, with room for a component or two beside it." },
+  headline: { label: "big number",   desc: "one value, large, with a caption under it. Click it on the panel for its history, week by week or month by month." },
+  meter:    { label: "gauge",        desc: "how much of a quota window is used, as a bar or a ring. Minimised mode keeps these." },
+  chips:    { label: "model chips",  desc: "one small tag per model, showing its share." },
+  spark:    { label: "sparkline",    desc: "a small activity chart for the selected time period, most recent on the right. Click it on the panel for the full history." },
+  months:   { label: "history list", desc: "one line per calendar month or week, newest first, each with a bar against the biggest one shown. A + marks a total that is a lower bound. Click it on the panel for the full history, with the weeks or months laid over each other." },
+  stat:     { label: "stat line",    desc: "a run of small numbers separated by dots. Add as many as the width fits." },
+  banner:   { label: "alert banner", desc: "a coloured strip that only appears when there is something to warn about." },
+  row:      { label: "side by side", desc: "a container. Drag components onto it, or use the + button, to sit them next to each other." },
+  text:     { label: "label",        desc: "a fixed piece of text of your own." },
+  divider:  { label: "divider",      desc: "a hairline, to separate one group from the next." },
+};
+
+/// The registry entry behind whatever this component is currently showing, so
+/// the hint can explain the chosen option and not just the component type.
+function chosenOption(spec) {
+  switch (spec.type) {
+    case "meter":  return GAUGES[spec.gauge];
+    case "chips":  return CHIPSOURCES[spec.source];
+    case "banner": return BANNERS[spec.source];
+    case "spark":  return SERIES[spec.series];
+    case "months": return historyList(spec)[spec.source];
+    case "headline": return METRICS[spec.metric];
+    default: return null;
+  }
+}
+
+const hasMeter = (spec) => spec.type === "meter" || (spec.items || []).some(hasMeter);
+
+// ================================================================== widgets
+// Each builder returns { node, update(data) }. Building is separated from
+// updating so the 1-second tick only writes text, never rebuilds DOM.
+
+const BUILDERS = {
+  header(spec, ctx) {
+    const node = el("div", "rh");
+    node.appendChild(el("span", "dot"));
+    node.appendChild(el("span", "cname", spec.title != null ? spec.title : ctx.card.id));
+    node.appendChild(el("span", "spacer"));
+    const items = el("div", "hrow");
+    items.dataset.dropzone = "nested";
+    node.appendChild(items);
+    const subs = (spec.items || []).map((item) => {
+      const built = build(item, ctx, ["items"]);
+      items.appendChild(built.node);
+      return built;
+    });
+    return { node, update: (d) => subs.forEach((s) => s.update(d)), container: items };
+  },
+
+  headline(spec) {
+    const node = el("div", "headline");
+    const v = el("span", "big", "—");
+    const sub = el("span", "bigsub", "");
+    node.append(v, sub);
+    return {
+      node,
+      update(d) {
+        const r = metricValue(spec.metric, d);
+        v.textContent = r.text;
+        node.title = r.title + "\n" + HISTORY_HINT;
+        // The caption follows the metric unless the user typed one of their own.
+        sub.textContent = spec.sub != null && spec.sub !== "" ? spec.sub : r.caption || "";
+      },
+    };
+  },
+
+  meter(spec, ctx) {
+    return spec.style === "ring" ? ringMeter(spec, ctx) : barMeter(spec, ctx);
+  },
+
+  chips(spec) {
+    const node = el("div", "chips");
+    return {
+      node,
+      update(d) {
+        const src = CHIPSOURCES[spec.source];
+        let items = src ? src.get(d) : [];
+        items = (items || []).slice(0, spec.limit || 3);
+        node.innerHTML = items.length
+          ? items.map((m) => `<span class="chip">${escapeHtml(m.name)} <b>${Math.round(m.share * 100)}%</b></span>`).join("")
+          : `<span class="chip">no activity</span>`;
+      },
+    };
+  },
+
+  spark(spec, ctx) {
+    const width = Number(spec.width) || 72;
+    const node = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    node.setAttribute("class", "spark");
+    node.setAttribute("width", width);
+    node.setAttribute("height", 16);
+    return {
+      node,
+      update(d) {
+        const s = SERIES[spec.series];
+        node.setAttribute("aria-label", s?.desc || "Activity");
+        node.setAttribute("role", "img");
+        drawSpark(node, s ? s.get(d) : [], ctx.accentVar, width);
+        const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+        title.textContent = [s?.desc, s?.note?.(d)].filter(Boolean).join(" ") + "\n" + HISTORY_HINT;
+        node.append(title);
+      },
+    };
+  },
+
+  months(spec) {
+    const node = el("div", "mlist");
+    return {
+      node,
+      update(d) {
+        const src = historyList(spec)[spec.source];
+        const all = src ? src.get(d) : [];
+        const shown = all.filter((m) => m.tracked).slice(-(spec.count || 6)).reverse();
+        const values = shown.map((m) => usageValue(src.provider, src.key, m));
+        const max = Math.max(...values.map((v) => v || 0), 1e-9);
+        const thisYear = new Date().getFullYear();
+        const weeks = src?.per === "week";
+        node.replaceChildren(...shown.map((m, i) => {
+          const date = new Date(m.start * 1000), v = values[i];
+          // Lower bounds: the period began before the history, or Codex usage
+          // without a published price.
+          const floor = v != null && src.fmt !== "pct" && (m.partial || (src.key === "cost" && m.unpricedTokens > 0));
+          const row = el("div", "mrow" + (m === all.at(-1) ? " now" : ""));
+          // A week is named by its Monday.
+          const name = date.toLocaleDateString("en", weeks ? { month: "short", day: "numeric" } : { month: "short" }) + (date.getFullYear() === thisYear ? "" : " ’" + String(date.getFullYear()).slice(2));
+          const track = el("span", "mtrack");
+          const fill = el("i");
+          fill.style.width = (v > 0 ? Math.max(2, (v / max) * 100) : 0) + "%";
+          track.append(fill);
+          const sunday = new Date(date);
+          sunday.setDate(sunday.getDate() + 6);
+          const span = weeks
+            ? `Week ${isoWeek(date)}, ${date.toLocaleDateString("en", { day: "numeric", month: "short" })} to ${sunday.toLocaleDateString("en", { day: "numeric", month: "short", year: "numeric" })}`
+            : date.toLocaleDateString("en", { month: "long", year: "numeric" });
+          const title = span + ": " + FMT[src.fmt](v) + (floor ? " or more" : "") +
+            (m.partial ? ". " + historyPartial(src.per) : "") + (src.key === "cost" && m.unpricedTokens > 0 ? ". Excludes usage without a published model price." : "") + "\n" + HISTORY_HINT;
+          const cells = [el("span", "mmon", name), track, el("span", "mval", FMT[src.fmt](v) + (floor ? "+" : ""))];
+          cells.forEach((c) => { c.title = title; });
+          row.append(...cells);
+          return row;
+        }));
+        if (!shown.length) node.append(el("span", "chip", "no history yet"));
+      },
+    };
+  },
+
+  stat(spec) {
+    const node = el("div", "stat");
+    return {
+      node,
+      update(d) {
+        node.title = (spec.metrics || []).map(id => metricValue(id, d).title).join("\n");
+        node.textContent = (spec.metrics || [])
+          .map((id) => {
+            const r = metricValue(id, d);
+            return r.unit ? `${r.text} ${r.unit}` : r.text;
+          })
+          .join(" · ");
+      },
+    };
+  },
+
+  banner(spec, ctx) {
+    const node = el("div", "banner");
+    return {
+      node,
+      update(d) {
+        const src = BANNERS[spec.source];
+        const res = src ? src.get(d) : null;
+        if (res) {
+          node.textContent = res.text;
+          node.style.setProperty("--tone", res.tone);
+          node.classList.add("on");
+          // Only a real limit interrupts a minimised panel. A reading that has
+          // gone stale is worth a strip when the panel is open, not a permanent
+          // one over the bars.
+          node.classList.toggle("urgent", res.tone === "var(--danger)");
+        } else {
+          node.textContent = state.editing && !ctx.preview ? `(${spec.source}: nothing to report)` : "";
+          node.classList.remove("on", "urgent");
+        }
+      },
+    };
+  },
+
+  row(spec, ctx) {
+    const node = el("div", "hrow");
+    const inner = el("div", "hrow");
+    inner.style.flex = "1";
+    inner.style.minWidth = "0";
+    inner.dataset.dropzone = "nested";
+    node.appendChild(inner);
+    const subs = (spec.items || []).map((item) => {
+      const built = build(item, ctx, ["items"]);
+      inner.appendChild(built.node);
+      return built;
+    });
+    return { node, update: (d) => subs.forEach((s) => s.update(d)), container: inner };
+  },
+
+  text(spec) {
+    const node = el("div", "label", spec.value || "");
+    return { node, update() {} };
+  },
+
+  divider() {
+    return { node: el("div", "divider"), update() {} };
+  },
+};
+
+function barMeter(spec, ctx) {
+  const node = el("div", "meter");
+  const label = el("span", "mlabel");
+  const track = el("span", "track");
+  const fill = el("i", "fill");
+  track.appendChild(fill);
+  const pct = el("span", "pct", "—");
+  const note = el("span", "mnote");
+  node.append(label, track, pct, note);
+  return {
+    node,
+    update(d) {
+      const g = GAUGES[spec.gauge];
+      const r = g ? g.get(d) : { pct: null, note: "?" };
+      label.textContent = spec.label || r.short || (g && g.short) || "";
+      note.textContent = r.note || "";
+      if (r.pct == null) {
+        fill.style.width = "0%";
+        pct.textContent = "—";
+        pct.classList.add("na");
+      } else {
+        fill.style.width = Math.max(0, Math.min(1, r.pct)) * 100 + "%";
+        fill.style.setProperty("--bar", barColor(r.pct));
+        pct.textContent = Math.round(r.pct * 100) + "%";
+        pct.classList.remove("na");
+      }
+    },
+  };
+}
+
+function ringMeter(spec, ctx) {
+  const size = Number(spec.size) || 46;
+  const stroke = 4;
+  const r = size / 2 - stroke / 2 - 0.5;
+  const circ = 2 * Math.PI * r;
+
+  const node = el("div", "ringwrap");
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", size);
+  svg.setAttribute("height", size);
+  svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
+  svg.innerHTML =
+    `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="var(--track)" stroke-width="${stroke}"/>` +
+    `<circle class="arc" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="var(--accent)"` +
+    ` stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="${circ}" stroke-dashoffset="${circ}"` +
+    ` transform="rotate(-90 ${size / 2} ${size / 2})" style="transition:stroke-dashoffset .5s cubic-bezier(.22,.8,.3,1)"/>` +
+    `<text class="val" x="50%" y="50%" text-anchor="middle" dominant-baseline="central"` +
+    ` style="font:600 11px var(--mono);fill:var(--text)">—</text>`;
+  const label = el("span", "ringlabel");
+  const note = el("span", "ringnote");
+  node.append(svg, label, note);
+
+  return {
+    node,
+    update(d) {
+      const g = GAUGES[spec.gauge];
+      const res = g ? g.get(d) : { pct: null, note: "?" };
+      label.textContent = spec.label || res.short || (g && g.short) || "";
+      note.textContent = spec.hideNote ? "" : res.note || "";
+      const arc = svg.querySelector(".arc");
+      const val = svg.querySelector(".val");
+      if (res.pct == null) {
+        arc.setAttribute("stroke-dashoffset", circ);
+        val.textContent = "—";
+      } else {
+        const c = Math.max(0, Math.min(1, res.pct));
+        arc.setAttribute("stroke-dashoffset", circ * (1 - c));
+        arc.setAttribute("stroke", barColor(res.pct));
+        val.textContent = Math.round(res.pct * 100) + "%";
+      }
+    },
+  };
+}
+
+function drawSpark(svg, values, accent, w) {
+  const h = 16;
+  values = values || [];
+  const n = values.length || 1;
+  const max = Math.max(...values, 1e-9);
+  const gap = 1.4;
+  const bw = (w - gap * (n - 1)) / n;
+  let out = `<rect x="0" y="${h - 0.7}" width="${w}" height="0.7" fill="${accent}" opacity="0.18"/>`;
+  values.forEach((v, i) => {
+    if (v <= 0) return;
+    const bh = Math.max(1.5, (v / max) * h);
+    out += `<rect x="${(i * (bw + gap)).toFixed(2)}" y="${(h - bh).toFixed(2)}" width="${bw.toFixed(2)}"` +
+      ` height="${bh.toFixed(2)}" rx="${Math.min(1, bw / 2).toFixed(2)}" fill="${accent}"` +
+      ` opacity="${i === n - 1 ? 1 : 0.42}"/>`;
+  });
+  svg.innerHTML = out;
+}
+
+const escapeHtml = (s) =>
+  String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ============================================================ layout builder
+
+function build(spec, ctx, domainTag) {
+  const builder = BUILDERS[spec.type];
+  const built = builder
+    ? builder(spec, ctx)
+    : { node: el("div", "stat", `unknown component "${spec.type}"`), update() {} };
+
+  const wrap = el("div", "wrap " + (spec.type === "header" ? "row-header " : "") + (spec.hidden ? "row-hidden" : ""));
+  wrap.dataset.domain = domainTag ? "nested" : "top";
+  wrap.dataset.type = spec.type;
+  // Minimised "bars" mode keys off this: a gauge, or a container holding one.
+  if (hasMeter(spec)) wrap.dataset.meter = "1";
+  wrap.__spec = spec;
+  wrap.__built = built;
+  if (HISTORY_TYPES.has(spec.type)) wrap.dataset.history = "1";
+  if (ctx.preview) {
+    const body = el("div", "body");
+    body.append(built.node);
+    wrap.append(body);
+    return { node: wrap, update: built.update };
+  }
+
+  const grip = el("span", "grip", "⠿");
+  grip.addEventListener("mousedown", (e) => beginDrag(e, wrap));
+  const body = el("div", "body");
+  body.appendChild(built.node);
+  const summary = el("div", "outline-row");
+  const select = el("button", "outline-select");
+  select.append(el("span", "outline-label", componentLabel(spec)), el("span", "outline-kind", TYPES[spec.type]?.label || spec.type));
+  select.setAttribute("aria-pressed", String(state.selected === spec));
+  select.onclick = () => selectComponent(spec);
+  summary.append(select);
+  if (spec.hidden) summary.append(el("span", "outline-hidden", "Hidden"));
+  wrap.classList.toggle("selected", state.selected === spec);
+  wrap.__ctx = ctx;
+  wrap.append(grip, summary, body);
+  return { node: wrap, update: built.update, spec, container: built.container };
+}
+
+function buildLayout() {
+  updaters = [];
+  const scrollTop = $("cards").scrollTop;
+  const inspectorScroll = $("inspector").scrollTop;
+  const host = $("cards");
+  host.innerHTML = "";
+  const cfg = state.config;
+
+  cfg.cards.forEach((card, cardIndex) => {
+    const section = el("section", "card");
+    section.dataset.off = card.enabled === false ? "1" : "0";
+    section.style.setProperty("--accent", card.accent || "#e08a63");
+
+    const rowsHost = el("div", "rows");
+    rowsHost.dataset.dropzone = "top";
+    rowsHost.__card = card;
+    section.appendChild(buildCardEditor(card, cardIndex));
+    section.appendChild(rowsHost);
+
+    const ctx = { card, accentVar: "var(--accent)" };
+    (card.rows || []).forEach((spec) => {
+      const built = build(spec, ctx, null);
+      rowsHost.appendChild(built.node);
+      updaters.push(built.update);
+    });
+
+    host.appendChild(section);
+  });
+
+  host.scrollTop = scrollTop;
+  if (state.editing) {
+    if (!state.selected || !locate(state.selected)) state.selected = cfg.cards.flatMap(c => c.rows || []).find(s => s.type === "meter") || cfg.cards[0]?.rows?.[0];
+    selectComponent(state.selected, false);
+    $("inspector").scrollTop = inspectorScroll;
+  }
+  applyData();
+}
+
+function componentLabel(spec) {
+  if (spec.type === "header") return spec.title || "Card header";
+  if (spec.type === "text") return spec.value || "Text label";
+  if (spec.type === "row") return "Side by side";
+  if (spec.type === "stat") return (spec.metrics || []).map(id => METRICS[id]?.short || METRICS[id]?.label || id).join(", ") || "Stat line";
+  return chosenOption(spec)?.label || TYPES[spec.type]?.label || spec.type;
+}
+
+function updateComponentLabel(spec) {
+  const wrap = [...document.querySelectorAll("#cards .wrap")].find(w => w.__spec === spec);
+  if (wrap) wrap.querySelector(":scope > .outline-row .outline-label").textContent = componentLabel(spec);
+  if (state.selected === spec) $("inspector").querySelector(".inspector-title").textContent = componentLabel(spec);
+  if (spec.type === "header" && wrap) wrap.closest(".card").querySelector(".cardedit-title").textContent = spec.title || "Card";
+}
+
+function selectComponent(spec, focus = true) {
+  state.selected = spec;
+  const host = $("inspector");
+  host.replaceChildren();
+  let selectedWrap;
+  document.querySelectorAll("#cards .wrap").forEach(w => {
+    const selected = w.__spec === spec;
+    w.classList.toggle("selected", selected);
+    w.querySelector(":scope > .outline-row button").setAttribute("aria-pressed", String(selected));
+    if (selected) selectedWrap = w;
+  });
+  if (!selectedWrap) {
+    host.append(el("div", "hint", "Add a component to start building your layout."));
+    return;
+  }
+  host.append(el("div", "inspector-title", componentLabel(spec)));
+  const ctl = el("div", "ctl");
+  buildRowControls(ctl, spec, selectedWrap.__ctx, selectedWrap.__built);
+  host.append(ctl, buildHint(spec));
+  if (focus) host.scrollTop = 0;
+}
+
+// The preview uses the same widget builders, in a shadow tree so editor styles,
+// drop targets, and component selection can never affect the real HUD rendering.
+const previewShadow = $("live-preview").attachShadow({ mode: "open" });
+const previewStyle = el("style");
+previewStyle.textContent = document.querySelector("style").textContent.replace(
+  /:root((?:\[[^\]]+\])*)/g, (_, attributes) => attributes ? `:host(${attributes})` : ":host"
+) + "\n#root { max-height: none; } :host { color: var(--text); font: 400 12px/1.35 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }";
+previewShadow.append(previewStyle);
+let previewLayoutKey = "";
+let previewUpdaters = [];
+
+function syncLivePreview() {
+  if (!state.customizing || !state.config) return;
+  const t = state.config.theme, host = $("live-preview");
+  host.dataset.scheme = document.documentElement.dataset.scheme;
+  host.dataset.density = t.density || "normal";
+  host.dataset.collapsed = state.previewCollapsed ? "1" : "0";
+  host.dataset.cmode = t.collapsedMode || "bars";
+  host.style.setProperty("--veil", document.documentElement.style.getPropertyValue("--veil"));
+  host.style.setProperty("--radius", (t.radius ?? 14) + "px");
+  host.style.width = (t.width || 380) + "px";
+  const key = JSON.stringify(state.config.cards);
+  if (key !== previewLayoutKey || !previewShadow.querySelector("#root")) {
+    previewLayoutKey = key;
+    previewUpdaters = [];
+    const root = el("div");
+    root.id = "root";
+    root.append($("top").cloneNode(true));
+    for (const card of state.config.cards) {
+      const section = el("section", "card");
+      section.dataset.off = card.enabled === false ? "1" : "0";
+      section.style.setProperty("--accent", card.accent || "#e08a63");
+      const rows = el("div", "rows");
+      for (const spec of card.rows || []) {
+        const built = build(spec, { card, accentVar: "var(--accent)", preview: true }, null);
+        rows.append(built.node);
+        previewUpdaters.push(built.update);
+      }
+      section.append(rows);
+      root.append(section);
+    }
+    previewShadow.querySelector("#root")?.remove();
+    previewShadow.append(root);
+  }
+  if (state.data && !state.data.error) {
+    for (const update of previewUpdaters) {
+      try { update(state.data); } catch (e) { /* match the HUD's partial-data behavior */ }
+    }
+  }
+  fitHeaders(previewShadow);
+  previewShadow.querySelector("#age").textContent = $("age").textContent;
+  $("b-preview-collapse").setAttribute("aria-pressed", String(state.previewCollapsed));
+  $("b-preview-collapse").classList.toggle("on", state.previewCollapsed);
+  fitLivePreview();
+}
+
+function fitLivePreview() {
+  if (!state.customizing) return;
+  const host = $("live-preview"), viewport = $("preview-viewport");
+  const width = Number(state.config.theme.width) || 380;
+  const scale = Math.min(1, Math.max(1, viewport.clientWidth - 28) / width);
+  host.style.transform = `scale(${scale})`;
+  $("preview-size").style.width = (width * scale) + "px";
+  $("preview-size").style.height = (host.offsetHeight * scale) + "px";
+  $("preview-caption").textContent = width + "px HUD" + (scale < .995 ? " · scaled to fit" : " · actual size");
+}
+$("b-preview-collapse").onclick = () => {
+  state.previewCollapsed = !state.previewCollapsed;
+  syncLivePreview();
+};
+new ResizeObserver(fitLivePreview).observe($("preview-viewport"));
+
+// ============================================================== edit controls
+
+const PALETTE = [
+  { label: "gauge bar", type: "meter", make: () => ({ type: "meter", gauge: "claude.weekly", style: "bar" }) },
+  { label: "gauge ring", type: "meter", make: () => ({ type: "meter", gauge: "claude.weekly", style: "ring" }) },
+  { label: "big number", type: "headline", make: () => ({ type: "headline", metric: "claude.cost.today", sub: null }) },
+  { label: "stat line", type: "stat", make: () => ({ type: "stat", metrics: ["claude.reqs.today"] }) },
+  { label: "model chips", type: "chips", make: () => ({ type: "chips", source: "claude.models.today", limit: 3 }) },
+  { label: "sparkline", type: "spark", make: () => ({ type: "spark", series: "claude.activity.cost.14d", width: 72 }) },
+  { label: "month by month", type: "months", make: () => ({ type: "months", source: "claude.cost", count: 6 }) },
+  { label: "week by week", type: "months", make: () => ({ type: "months", per: "week", source: "claude.cost", count: 6 }) },
+  { label: "side by side", type: "row", make: () => ({ type: "row", items: [] }) },
+  { label: "alert banner", type: "banner", make: () => ({ type: "banner", source: "claude.limit" }) },
+  { label: "label", type: "text", make: () => ({ type: "text", value: "note" }) },
+  { label: "divider", type: "divider", make: () => ({ type: "divider" }) },
+];
+
+/// The grey line under a component in edit mode: what kind of thing it is, then
+/// what the option it is set to actually measures.
+function buildHint(spec) {
+  const node = el("details", "hint");
+  node.append(el("summary", null, "About this component"));
+  const t = TYPES[spec.type];
+  node.append(el("b", null, (t ? t.label : spec.type) + ": "), document.createTextNode(t ? t.desc : ""));
+  const chosen = chosenOption(spec);
+  if (chosen && chosen.desc) {
+    node.append(document.createTextNode(" "), el("b", null, chosen.label + ": "), document.createTextNode(chosen.desc));
+  }
+  return node;
+}
+
+/// Options are [value, label, tooltip]; an entry of the form { group, items }
+/// becomes an <optgroup>. The grouping is what keeps a thirty-item metric list
+/// readable instead of one undifferentiated scroll.
+function picker(options, current, onPick, title) {
+  const sel = el("select");
+  if (title) { sel.title = title; sel.setAttribute("aria-label", title); }
+  const add = (host, [value, label, tip]) => {
+    const opt = el("option", null, label);
+    opt.value = value;
+    if (tip) opt.title = tip;
+    if (value === current) opt.selected = true;
+    host.appendChild(opt);
+  };
+  for (const o of options) {
+    if (o && o.group) {
+      const g = document.createElement("optgroup");
+      g.label = o.group;
+      o.items.forEach((i) => add(g, i));
+      sel.appendChild(g);
+    } else {
+      add(sel, o);
+    }
+  }
+  sel.addEventListener("change", () => onPick(sel.value));
+  sel.addEventListener("mousedown", (e) => e.stopPropagation());
+  return sel;
+}
+
+const entries = (reg) => canonical(reg).map(([k, v]) => [k, v.label || k, v.desc || ""]);
+
+// Every registry key is "<source>.<what>", so the prefix is a ready-made group.
+const GROUP_NAMES = { claude: "Claude Code", codex: "Codex", meta: "The panel itself" };
+const groupOptions = (triples) => {
+  const out = new Map();
+  for (const [key, label, tip] of triples) {
+    const name = GROUP_NAMES[key.split(".")[0]] || "Other";
+    // Inside the Claude group, "Claude · cost" reads as "cost".
+    const short = label.includes(" · ") ? label.slice(label.indexOf(" · ") + 3) : label;
+    if (!out.has(name)) out.set(name, { group: name, items: [] });
+    out.get(name).items.push([key, short, tip]);
+  }
+  return [...out.values()];
+};
+const grouped = (reg) => groupOptions(entries(reg));
+
+/// The option value a <select> should carry for `id` so the current choice is
+/// recognised: a saved layout may hold an alias of the same entry.
+const asCurrent = (reg, id, current) => (reg[id] === reg[current] ? current : id);
+
+/// One option per quantity, offered in the window the component already shows
+/// so that picking another quantity keeps the period. Readings without a window
+/// (reset countdowns, plan, ages) follow, each once.
+function valueOptions(reg, current) {
+  const period = reg[current]?.period;
+  const families = FAMILIES.get(reg) || {};
+  const seen = new Set();
+  const triples = [];
+  for (const [id, item] of canonical(reg)) {
+    if (!item.family) { triples.push([id, item.label, item.desc || ""]); continue; }
+    if (seen.has(item.family)) continue;
+    seen.add(item.family);
+    const pick = (period && families[item.family]?.[period]) || id;
+    const name = PROVIDERS[item.provider] || item.provider;
+    triples.push([asCurrent(reg, pick, current), `${name} · ${item.quantity}`, `${name} ${item.quantity}, over the window chosen beside it.`]);
+  }
+  return groupOptions(triples);
+}
+
+/// Switching quantity keeps the window when the new quantity has it.
+function matchingPeriod(reg, next, current) {
+  const period = reg[current]?.period, family = reg[next]?.family;
+  return (period && family && FAMILIES.get(reg)?.[family]?.[period]) || next;
+}
+
+/// The same window list for every quantity of a kind: values and model chips
+/// take the calendar periods and the provider's quota windows, charts take the
+/// calendar periods and the two rolling spans.
+function periodPicker(reg, current, onPick) {
+  const item = reg[current];
+  const ids = item?.family && FAMILIES.get(reg)?.[item.family];
+  if (!ids) return null;
+  const options = Object.values(ids).map((id) => {
+    const label = reg[id].label;
+    return [asCurrent(reg, id, current), label.slice(label.lastIndexOf(" · ") + 3), reg[id].windowDesc || reg[id].desc];
+  });
+  const select = picker(options, current, onPick, "Time window. Every value of this kind offers the same list.");
+  select.classList.add("period-picker");
+  select.setAttribute("aria-label", "Time period");
+  return select;
+}
+
+function buildRowControls(ctl, spec, ctx, built) {
+  const commit = () => { save(); buildLayout(); };
+  const field = (label, control) => {
+    const row = el("label", "control-field");
+    row.append(el("span", "control-label", label), control);
+    ctl.append(row);
+  };
+  const usageFields = (label, reg, key, afterPick = () => {}) => {
+    const select = v => { spec[key] = v; afterPick(); commit(); };
+    field(label, picker(valueOptions(reg, spec[key]), spec[key], v => select(matchingPeriod(reg, v, spec[key])), "Choose the value to display"));
+    const period = periodPicker(reg, spec[key], select);
+    if (period) field("Time period", period);
+    // Where someone looking for "week by week" in this picker actually finds it.
+    if (reg === METRICS || reg === SERIES) {
+      ctl.append(el("span", "hint", "Week by week or month by month: click this on the panel, or open History with the bar-chart button in the title bar."));
+    }
+    if (reg[spec[key]]?.family === "codex.cost") {
+      ctl.append(el("span", "hint", "Estimated API cost uses published model prices automatically, including cached-input discounts. A + means some usage has no published price; hover the value for details."));
+    }
+  };
+
+  if (spec.type === "headline") {
+    usageFields("Value", METRICS, "metric", () => { spec.sub = null; });
+    const cap = el("input");
+    cap.type = "text";
+    cap.placeholder = (METRICS[spec.metric] && METRICS[spec.metric].caption) || "caption";
+    cap.value = spec.sub || "";
+    cap.style.maxWidth = "96px";
+    cap.title = "caption under the number — empty follows the metric";
+    cap.addEventListener("input", () => {
+      spec.sub = cap.value === "" ? null : cap.value;
+      const label = built.node.querySelector(".bigsub");
+      if (label) label.textContent = spec.sub != null ? spec.sub : cap.placeholder;
+      save();
+    });
+    cap.addEventListener("mousedown", (e) => e.stopPropagation());
+    field("Caption (optional)", cap);
+  } else if (spec.type === "meter") {
+    field("Quota window", picker(grouped(GAUGES), spec.gauge, (v) => { spec.gauge = v; commit(); }, "which quota window this gauge tracks"));
+    ctl.append(el("span", "hint", "Gauges track the provider's own quota windows. Big numbers, stat lines, model chips and sparklines take any window: Daily, Weekly, Monthly, Last week, Last month or a quota window. Week by week and month by month are in History, the bar-chart button in the title bar, or a click on any big number."));
+    field("Display style", picker(
+      [["bar", "bar", "full-width bar with the percentage and a note beside it"],
+       ["ring", "ring", "compact dial - fits several side by side in one row"]],
+      spec.style || "bar", (v) => { spec.style = v; commit(); }, "how the gauge is drawn"));
+  } else if (spec.type === "spark") {
+    usageFields("Activity series", SERIES, "series");
+  } else if (spec.type === "months") {
+    const per = spec.per === "week" ? "week" : "month";
+    field("Value", picker(grouped(historyList(spec)), spec.source, (v) => { spec.source = v; commit(); }, `what each ${per} shows`));
+    field("Per", picker([["month", "Month"], ["week", "Week"]], per, (v) => { if (v === "week") spec.per = v; else delete spec.per; commit(); }, "one line per calendar month or per week"));
+    field(per === "week" ? "Weeks to show" : "Months to show", picker([["3", "3"], ["6", "6"], ["12", "12"]], String(spec.count || 6), (v) => { spec.count = Number(v); commit(); }, `how many ${per}s, newest first`));
+  } else if (spec.type === "chips") {
+    usageFields("Models", CHIPSOURCES, "source");
+    field("Models to show", picker([[1, "1"], [2, "2"], [3, "3"], [4, "4"]].map(([a, b]) => [String(a), b]), String(spec.limit || 3), (v) => { spec.limit = Number(v); commit(); }, "how many models to show"));
+  } else if (spec.type === "banner") {
+    field("Alert", picker(grouped(BANNERS), spec.source, (v) => { spec.source = v; commit(); }, "what this banner watches for"));
+  } else if (spec.type === "header") {
+    const input = el("input");
+    input.type = "text";
+    input.value = spec.title || "";
+    input.style.maxWidth = "84px";
+    input.title = "the card's name";
+    input.addEventListener("input", () => { spec.title = input.value; built.node.querySelector(".cname").textContent = input.value; updateComponentLabel(spec); save(); });
+    input.addEventListener("mousedown", (e) => e.stopPropagation());
+    field(spec.type === "header" ? "Card name" : "Text", input);
+  } else if (spec.type === "text") {
+    const input = el("input");
+    input.type = "text";
+    input.value = spec.value || "";
+    input.style.maxWidth = "110px";
+    input.title = "the text to show";
+    input.addEventListener("input", () => { spec.value = input.value; built.node.textContent = input.value; updateComponentLabel(spec); save(); });
+    input.addEventListener("mousedown", (e) => e.stopPropagation());
+    field(spec.type === "header" ? "Card name" : "Text", input);
+  } else if (spec.type === "stat") {
+    ctl.appendChild(statEditor(spec, commit));
+  }
+
+  const actions = el("div", "control-actions");
+  ctl.append(actions);
+  if (spec.type === "row" || spec.type === "header") {
+    const add = el("button", "mini", "+ Add inside");
+    add.title = "add a component inside this row";
+    add.onclick = () => openPalette(add, (make) => { const added = make(); (spec.items = spec.items || []).push(added); state.selected = added; commit(); }, ctx.card);
+    actions.appendChild(add);
+  }
+
+  // Dragging is the quick way; these are the exact way, and they reach places a
+  // drag has to be aimed at: out of a side-by-side row, or into the next card.
+  const up = el("button", "mini", "↑ Move up");
+  up.dataset.act = "up";
+  up.title = "move up. At the top of a row it steps out of the row; at the top of a card it moves to the card above";
+  up.disabled = !nudge(spec, -1, true);
+  up.onclick = () => { if (nudge(spec, -1)) commit(); };
+  const down = el("button", "mini", "↓ Move down");
+  down.dataset.act = "down";
+  down.title = "move down. At the bottom of a row it steps out of the row; at the bottom of a card it moves to the card below";
+  down.disabled = !nudge(spec, 1, true);
+  down.onclick = () => { if (nudge(spec, 1)) commit(); };
+  actions.append(up, down);
+
+  if (spec.type !== "header") {
+    const eye = el("button", "mini", spec.hidden ? "Show" : "Hide");
+    eye.dataset.act = "hide";
+    eye.title = spec.hidden ? "show this component again" : "keep this component but stop drawing it";
+    eye.onclick = () => { spec.hidden = !spec.hidden; commit(); };
+    actions.appendChild(eye);
+
+    const del = el("button", "mini danger", "Remove");
+    del.dataset.act = "remove";
+    del.title = "remove this component";
+    del.onclick = () => { removeSpec(spec); commit(); };
+    actions.appendChild(del);
+  }
+}
+
+function statEditor(spec, commit) {
+  const box = el("div", "statchips");
+  (spec.metrics || []).forEach((id, i) => {
+    const chip = el("span", "statchip");
+    chip.title = (METRICS[id] && METRICS[id].label) || id;
+    const value = picker(valueOptions(METRICS, id), id, v => { spec.metrics[i] = matchingPeriod(METRICS, v, id); commit(); }, "Value in this stat line");
+    value.setAttribute("aria-label", "Stat value");
+    chip.appendChild(value);
+    const period = periodPicker(METRICS, id, v => { spec.metrics[i] = v; commit(); });
+    if (period) chip.appendChild(period);
+    const x = el("button", null, "×");
+    x.setAttribute("aria-label", "Remove stat value");
+    x.onclick = () => { spec.metrics.splice(i, 1); commit(); };
+    chip.appendChild(x);
+    box.appendChild(chip);
+  });
+  const add = picker([["", "+ metric"], ...valueOptions(METRICS, "")], "", (v) => {
+    if (v) { (spec.metrics = spec.metrics || []).push(v); commit(); }
+  }, "add another number to this line");
+  add.style.maxWidth = "92px";
+  box.appendChild(add);
+  return box;
+}
+
+function buildCardEditor(card, index) {
+  const bar = el("div", "cardedit");
+  const commit = () => { save(); buildLayout(); };
+
+  const add = el("button", "mini", "+ component");
+  add.title = "add a component to the bottom of this card";
+  add.onclick = () => openPalette(add, (make) => { const added = make(); (card.rows = card.rows || []).push(added); state.selected = added; commit(); document.querySelector(".wrap.selected")?.scrollIntoView({ block: "nearest" }); });
+  bar.appendChild(el("span", "cardedit-title", card.rows?.find(s => s.type === "header")?.title || card.id || "Card"));
+  bar.appendChild(add);
+
+  const color = el("input");
+  color.type = "color";
+  color.value = card.accent || "#e08a63";
+  color.title = "accent colour";
+  color.setAttribute("aria-label", "Card accent colour");
+  color.addEventListener("input", () => {
+    card.accent = color.value;
+    color.closest(".card").style.setProperty("--accent", color.value);
+    save();
+  });
+  bar.appendChild(color);
+
+  const up = el("button", "mini", "↑");
+  up.title = "move this whole card up";
+  up.disabled = index === 0;
+  up.onclick = () => { moveCard(index, -1); commit(); };
+  const down = el("button", "mini", "↓");
+  down.title = "move this whole card down";
+  down.disabled = index === state.config.cards.length - 1;
+  down.onclick = () => { moveCard(index, 1); commit(); };
+  bar.append(up, down);
+
+  const eye = el("button", "mini", card.enabled === false ? "hidden" : "shown");
+  eye.title = "show or hide this whole card";
+  eye.onclick = () => { card.enabled = card.enabled === false; commit(); };
+  bar.appendChild(eye);
+
+
+  const pal = el("div", "palette");
+  pal.id = "pal-" + index;
+  bar.appendChild(pal);
+  return bar;
+}
+
+let openPaletteEl = null;
+function openPalette(anchor, onPick, targetCard) {
+  const card = anchor.closest(".card") || [...document.querySelectorAll(".card")].find(c => c.querySelector(".rows").__card === targetCard);
+  let pal = card.querySelector(".palette");
+  const wasOpen = pal.classList.contains("open") && openPaletteEl === pal;
+  if (openPaletteEl && openPaletteEl !== pal) openPaletteEl.classList.remove("open");
+  pal.innerHTML = "";
+  PALETTE.forEach((p) => {
+    const b = el("button", "mini", p.label);
+    const t = TYPES[p.type];
+    if (t) b.title = t.label + ": " + t.desc;
+    b.onclick = () => { pal.classList.remove("open"); onPick(p.make); };
+    pal.appendChild(b);
+  });
+  pal.classList.toggle("open", !wasOpen);
+  if (!wasOpen) pal.scrollIntoView({ block: "nearest" });
+  anchor.classList.toggle("armed", pal.classList.contains("open"));
+  openPaletteEl = pal;
+  reportHeight();
+}
+
+/// Every component lives in exactly one list: a card's rows, or a container's
+/// items. Finding that list lets the move buttons edit the config directly
+/// instead of simulating a drag.
+function locate(spec) {
+  const cards = state.config.cards;
+  const search = (list, parent, card, cardIndex) => {
+    if (!Array.isArray(list)) return null;
+    const i = list.indexOf(spec);
+    if (i >= 0) return { list, index: i, parent, card, cardIndex };
+    for (const s of list) {
+      const r = search(s.items, s, card, cardIndex);
+      if (r) return r;
+    }
+    return null;
+  };
+  for (let ci = 0; ci < cards.length; ci++) {
+    const found = search(cards[ci].rows, null, cards[ci], ci);
+    if (found) return found;
+  }
+  return null;
+}
+
+/// One step up or down. At the edge of a side-by-side row the component steps
+/// out of it; at the edge of a card it moves to the neighbouring card, landing
+/// under that card's header rather than above it. Returns false when there is
+/// nowhere left to go, which is what greys the button out. `dry` asks the
+/// question without moving anything.
+function nudge(spec, dir, dry) {
+  const loc = locate(spec);
+  if (!loc) return false;
+
+  const target = loc.index + dir;
+  if (target >= 0 && target < loc.list.length) {
+    if (!dry) {
+      loc.list.splice(loc.index, 1);
+      loc.list.splice(target, 0, spec);
+    }
+    return true;
+  }
+
+  if (loc.parent) {
+    const outer = locate(loc.parent);
+    if (!outer) return false;
+    if (!dry) {
+      loc.list.splice(loc.index, 1);
+      outer.list.splice(outer.index + (dir > 0 ? 1 : 0), 0, spec);
+    }
+    return true;
+  }
+
+  const next = state.config.cards[loc.cardIndex + dir];
+  if (!next) return false;
+  if (!dry) {
+    loc.list.splice(loc.index, 1);
+    next.rows = next.rows || [];
+    const under = next.rows[0] && next.rows[0].type === "header" ? 1 : 0;
+    next.rows.splice(dir > 0 ? under : next.rows.length, 0, spec);
+  }
+  return true;
+}
+
+function moveCard(index, delta) {
+  const cards = state.config.cards;
+  const to = index + delta;
+  if (to < 0 || to >= cards.length) return;
+  const [c] = cards.splice(index, 1);
+  cards.splice(to, 0, c);
+}
+
+function removeSpec(spec) {
+  const strip = (list) => {
+    if (!Array.isArray(list)) return;
+    const i = list.indexOf(spec);
+    if (i >= 0) { list.splice(i, 1); return; }
+    list.forEach((s) => { strip(s.items); });
+  };
+  state.config.cards.forEach((c) => strip(c.rows));
+}
+
+// ================================================================== dragging
+
+let drag = null;
+let dragFrame = 0;
+function scrollWhileDragging() {
+  if (!drag) return;
+  const host = $("cards"), r = host.getBoundingClientRect();
+  const p = drag.point;
+  if (p && p.clientX >= r.left && p.clientX <= r.right) {
+    const distance = p.clientY < r.top + 30 ? -7 : p.clientY > r.bottom - 30 ? 7 : 0;
+    const before = host.scrollTop;
+    host.scrollTop += distance;
+    if (host.scrollTop !== before) onDragMove(p);
+  }
+  dragFrame = requestAnimationFrame(scrollWhileDragging);
+}
+
+function beginDrag(e, wrap) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  drag = { wrap, spec: wrap.__spec, point: e };
+  dragFrame = requestAnimationFrame(scrollWhileDragging);
+  wrap.classList.add("dragging");
+  state.selected = wrap.__spec;
+  window.addEventListener("mousemove", onDragMove);
+  window.addEventListener("mouseup", endDrag, { once: true });
+}
+
+/// A component can be dropped in any card and inside any side-by-side row. The
+/// refusals are the ones with no useful meaning: a container inside itself, and
+/// a card header or a row nested inside another row.
+function zoneAccepts(zone, spec) {
+  if (drag.wrap.contains(zone)) return false;
+  if (zone.dataset.dropzone === "nested" && (spec.type === "row" || spec.type === "header")) return false;
+  return true;
+}
+
+const clearHot = () => document.querySelectorAll(".zone-hot").forEach((z) => z.classList.remove("zone-hot"));
+
+function onDragMove(e) {
+  if (!drag) return;
+  drag.point = e;
+
+  // The innermost container under the cursor takes the drop, so hovering a row
+  // that sits inside a card means the row, not the card.
+  let zone = null;
+  let area = Infinity;
+  for (const z of document.querySelectorAll("[data-dropzone]")) {
+    if (!zoneAccepts(z, drag.spec)) continue;
+    const r = z.getBoundingClientRect();
+    const pad = z.children.length ? 2 : 8;   // an empty container needs a bigger target
+    if (e.clientX < r.left - pad || e.clientX > r.right + pad) continue;
+    if (e.clientY < r.top - pad || e.clientY > r.bottom + pad) continue;
+    const a = Math.max(1, r.width) * Math.max(1, r.height);
+    if (a < area) { zone = z; area = a; }
+  }
+  clearHot();
+  if (!zone) return;
+  zone.classList.add("zone-hot");
+
+  // Hit-test on the axis the container is actually laid out on. Editing stacks
+  // side-by-side rows, so this is vertical there; were it not, every item in a
+  // row would share one vertical band and reordering would be impossible.
+  const box = getComputedStyle(zone);
+  const across = box.display.includes("flex") && box.flexDirection.startsWith("row");
+  let before = null;
+  for (const kid of zone.children) {
+    if (kid === drag.wrap || !kid.classList.contains("wrap")) continue;
+    const r = kid.getBoundingClientRect();
+    const mid = across ? r.left + r.width / 2 : r.top + r.height / 2;
+    if ((across ? e.clientX : e.clientY) < mid) { before = kid; break; }
+  }
+  if (zone !== drag.wrap.parentNode || before !== drag.wrap.nextSibling) zone.insertBefore(drag.wrap, before);
+}
+
+function endDrag() {
+  if (!drag) return;
+  cancelAnimationFrame(dragFrame);
+  drag.wrap.classList.remove("dragging");
+  clearHot();
+  window.removeEventListener("mousemove", onDragMove);
+  drag = null;
+  commitOrderFromDom();
+  save();
+  buildLayout();
+}
+
+/// Reads the DOM back into the config. Every wrapper carries its own spec, so
+/// order (including moves between cards) falls out of the tree as it now stands.
+/// Anything the DOM has managed to lose is put back where it came from rather
+/// than being dropped - a reorder must never be able to delete a component.
+function commitOrderFromDom() {
+  const owners = new Map();          // spec -> the card it belonged to
+  const collect = (list, card, into) => {
+    for (const spec of list || []) {
+      into.add(spec);
+      if (card) owners.set(spec, card);
+      collect(spec.items, card, into);
+    }
+  };
+
+  const before = new Set();
+  state.config.cards.forEach((c) => collect(c.rows, c, before));
+
+  document.querySelectorAll('[data-dropzone="top"]').forEach((host) => {
+    if (host.__card) host.__card.rows = [...host.children].filter((c) => c.__spec).map((c) => c.__spec);
+  });
+  document.querySelectorAll('[data-dropzone="nested"]').forEach((host) => {
+    const owner = host.closest(".wrap");
+    if (owner && owner.__spec) owner.__spec.items = [...host.children].filter((c) => c.__spec).map((c) => c.__spec);
+  });
+
+  const after = new Set();
+  state.config.cards.forEach((c) => collect(c.rows, null, after));
+
+  const orphans = [...before].filter((spec) => !after.has(spec));
+  for (const spec of orphans) {
+    const card = owners.get(spec) || state.config.cards[0];
+    if (card) (card.rows = card.rows || []).push(spec);
+  }
+  if (orphans.length) {
+    console.warn("usage-hud: " + orphans.length + " component(s) fell out of the DOM during a drag; restored");
+  }
+}
+
+// ==================================================================== drawer
+
+function buildDrawer() {
+  if (state.tab === "saved") return buildSaved();
+  const host = $("drawer");
+  host.innerHTML = "";
+  const t = state.config.theme;
+
+  // Every setting says what it does. The drawer is only open when someone is
+  // trying to change something, so the words are never in the way.
+  const field = (name, control, valueEl, hint) => {
+    const f = el("div", "field");
+    const label = el("label", "fname", name[0].toUpperCase() + name.slice(1));
+    control.id = "appearance-" + name;
+    if (control.matches("input, select")) label.htmlFor = control.id;
+    else { control.setAttribute("role", "group"); control.setAttribute("aria-label", name); }
+    f.append(label, control, valueEl || el("span", "fval", ""));
+    if (hint) f.appendChild(el("div", "fhint", hint));
+    host.appendChild(f);
+    return f;
+  };
+
+  const seg = (options, current, onPick) => {
+    const box = el("div", "seg");
+    options.forEach((o) => {
+      const b = el("button", current === o ? "sel" : null, o);
+      b.setAttribute("aria-pressed", String(current === o));
+      b.onclick = () => { onPick(o); };
+      box.appendChild(b);
+    });
+    return box;
+  };
+
+  field("theme", seg(["auto", "dark", "light"], t.scheme, (v) => { t.scheme = v; applyTheme(); save(); buildDrawer(); }),
+    null, "auto follows the macOS appearance.");
+  field("density", seg(["compact", "normal", "roomy"], t.density, (v) => { t.density = v; applyTheme(); save(); buildDrawer(); }),
+    null, "Adjust text size and space between components.");
+
+  // What the collapse button leaves behind. "bars" is the point of the panel;
+  // the rest is detail you can open up again with the same button.
+  field("minimised", seg(["bars", "headers", "both"], t.collapsedMode || "bars", (v) => {
+    t.collapsedMode = v; state.previewCollapsed = true; applyTheme(); save(); buildDrawer();
+  }), null, "Choose what remains when you minimise the HUD. Active quota alerts always stay visible.");
+
+  /// `live: false` defers the effect to mouse-up. Width needs that: the panel is
+  /// right-anchored, so resizing mid-drag slides this very slider out from under
+  /// the cursor and the drag falls apart. The readout still tracks live.
+  const slider = (key, min, max, step, unit, opts = {}) => {
+    const r = el("input");
+    r.type = "range";
+    r.min = min; r.max = max; r.step = step;
+    // The stored value is in real units (opacity is a 0-1 fraction); the slider
+    // works in display units (40-100). Scale up going in, or the thumb pins to
+    // the min while the readout shows the true value.
+    const scale = opts.scale || 1;
+    r.value = t[key] * scale;
+    const out = el("span", "fval", Math.round(t[key] * scale) + unit);
+
+    const commit = () => {
+      if (opts.onLive) opts.onLive();
+      pushTheme();
+      save();
+    };
+    r.addEventListener("input", () => {
+      t[key] = Number(r.value) / scale;
+      out.textContent = r.value + unit;
+      if (opts.live !== false) commit();
+      else syncLivePreview();
+    });
+    // Fires on mouse-up, and on every arrow-key step, so deferred controls stay
+    // keyboard-adjustable.
+    r.addEventListener("change", () => {
+      t[key] = Number(r.value) / scale;
+      out.textContent = r.value + unit;
+      commit();
+    });
+    r.addEventListener("mousedown", (e) => e.stopPropagation());
+    return [r, out];
+  };
+
+  field("width", ...slider("width", 300, 620, 2, "px", { live: false }),
+    "Your HUD width after Done. The customization window stays steady.");
+  field("opacity", ...slider("opacity", 40, 100, 1, "%", { scale: 100, onLive: applyTheme }),
+    "Background transparency. Text stays fully visible.");
+  field("radius", ...slider("radius", 0, 26, 1, "px", { onLive: applyTheme }), "corner rounding.");
+
+  field("vibrancy", picker(
+    [["hudWindow", "hud", "the darkest, most neutral blur - the default"],
+     ["popover", "popover", "lighter, like a macOS popover"],
+     ["sidebar", "sidebar", "the Finder sidebar material"],
+     ["menu", "menu", "the menu material"],
+     ["toolTip", "tooltip", "the tooltip material"],
+     ["underWindowBackground", "under window", "very heavily blurred"],
+     ["fullScreenUI", "fullscreen", "the material full-screen overlays use"],
+     ["contentBackground", "content", "flattest, closest to an opaque window"]],
+    t.vibrancy, (v) => { t.vibrancy = v; pushTheme(); save(); },
+    "which macOS blur material sits behind the panel"),
+    null, "the macOS blur behind the panel. It samples your wallpaper, so the effect depends on what is behind it.");
+
+  const interval = picker(
+    [["15", "15s"], ["30", "30s"], ["60", "1m"], ["120", "2m"], ["300", "5m"], ["900", "15m"]],
+    String(state.config.refreshSeconds), (v) => { state.config.refreshSeconds = Number(v); save(); },
+    "how often the logs are re-read");
+  field("refresh", interval, null, "How often local usage is refreshed. Live quota updates at most every two minutes.");
+
+  const foot = el("div", "drawerfoot");
+  const resetTheme = el("button", "mini", "reset appearance");
+  resetTheme.title = "put theme, density, size and minimised mode back to the shipped default";
+  resetTheme.onclick = () => {
+    Object.assign(t, { scheme: "auto", density: "normal", width: 380, opacity: 1, radius: 14, vibrancy: "hudWindow", collapsedMode: "bars" });
+    applyTheme(); pushTheme(); save(); buildDrawer();
+  };
+  const openFile = el("button", "mini", "open config file");
+  openFile.title = "open ~/.config/usage-hud/config.json - every setting here lives in that file";
+  openFile.onclick = () => bridge({ action: "openConfig" });
+  foot.append(resetTheme, openFile);
+  host.appendChild(foot);
+}
+
+// ============================================================ saved configs
+
+/// A saved config is the editor's own work under a name: layout, appearance
+/// and refresh interval. Machine settings stay out of it, so loading one never
+/// changes calibrated caps, hotkeys or pricing.
+const savedPart = (config) => JSON.parse(JSON.stringify({
+  cards: config.cards, theme: config.theme, refreshSeconds: config.refreshSeconds,
+}));
+const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
+
+function applySavedConfig(name) {
+  const entry = state.saved.find((s) => s.name === name);
+  if (!entry || !state.config) return false;
+  const c = entry.config || {};
+  const next = JSON.parse(JSON.stringify(state.config));
+  if (Array.isArray(c.cards)) next.cards = JSON.parse(JSON.stringify(c.cards));
+  // Minimised is where the panel is right now, not part of a look.
+  if (c.theme && typeof c.theme === "object") next.theme = { ...next.theme, ...c.theme, collapsed: next.theme.collapsed };
+  if (Number.isFinite(c.refreshSeconds)) next.refreshSeconds = c.refreshSeconds;
+  state.config = next;
+  state.selected = null;
+  applyTheme(); pushTheme(); buildLayout();
+  if (state.drawer) buildDrawer();
+  save();
+  return true;
+}
+
+function buildSaved() {
+  const host = $("drawer");
+  const draft = $("saved-name") ? $("saved-name").value : "";
+  host.innerHTML = "";
+
+  const form = el("div", "field");
+  const label = el("label", "fname", "Name");
+  const input = el("input");
+  input.type = "text";
+  input.id = label.htmlFor = "saved-name";
+  input.maxLength = 60;
+  input.placeholder = "Work, Minimal, Big numbers...";
+  input.value = draft;
+  const store = el("button", "mini", "Save");
+  store.title = "save the current layout and appearance under this name";
+  const submit = () => {
+    const name = input.value.trim();
+    if (!name) { input.focus(); return; }
+    const config = savedPart(state.config);
+    bridge({ action: "saveNamedConfig", name, config });
+    // The native side answers with the stored list; until then, show this one.
+    state.saved = [...state.saved.filter((s) => !sameName(s.name, name)), { name, savedAt: new Date().toISOString(), config }]
+      .sort((a, b) => a.name.localeCompare(b.name));
+    input.value = "";
+    buildSaved();
+  };
+  store.onclick = submit;
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+  form.append(label, input, store);
+  form.appendChild(el("div", "fhint", "Saves the current layout, appearance and refresh interval. Saving under an existing name replaces it. Calibrated caps, hotkeys and pricing stay as they are when you load one."));
+  host.appendChild(form);
+
+  if (!state.saved.length) {
+    host.appendChild(el("p", "saved-empty", "No saved configs yet. The right-click menu's Saved Configs switches between them without opening the editor."));
+    return;
+  }
+  for (const entry of state.saved) {
+    const row = el("div", "saved-row");
+    const text = el("div", "saved-text");
+    text.append(el("div", "saved-name", entry.name));
+    const when = entry.savedAt ? new Date(entry.savedAt) : null;
+    if (when && !isNaN(when)) text.appendChild(el("div", "saved-date", "saved " + when.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })));
+    const load = el("button", "mini", "Load");
+    load.title = "replace the current layout and appearance with this one; Undo last change brings the current one back";
+    load.onclick = () => applySavedConfig(entry.name);
+    const del = el("button", "mini danger", "Delete");
+    del.title = "delete this saved config; click twice, it cannot be undone";
+    let disarm = null;
+    del.onclick = () => {
+      if (!del.classList.contains("armed")) {
+        del.classList.add("armed");
+        del.textContent = "Confirm delete";
+        disarm = setTimeout(() => { del.classList.remove("armed"); del.textContent = "Delete"; }, 3000);
+        return;
+      }
+      clearTimeout(disarm);
+      bridge({ action: "deleteNamedConfig", name: entry.name });
+      state.saved = state.saved.filter((s) => s.name !== entry.name);
+      buildSaved();
+    };
+    row.append(text, load, del);
+    host.appendChild(row);
+  }
+}
+
+// =================================================================== history
+// Week by week and month by month, one click from the panel: the bar-chart
+// button in the title bar, a click on any big number, sparkline or history
+// list (the view opens on what that component shows), or Usage History… in the
+// right-click menu. Bars give each period; the overlay lays the periods over
+// each other as running totals, so this week reads against last week and a
+// typical one at the same point. The view takes the cards' place and the title
+// bar stays, so the way back is where the way in was. Its choices are a viewer
+// convenience, kept in the web view's storage rather than the config file.
+
+const HISTORY_TYPES = new Set(["headline", "spark", "months"]);
+const HISTORY_HINT = "Click for its history, week by week or month by month.";
+const HISTORY_PREFS = "usage-hud.history";
+const HISTORY_UNITS = {
+  week:  { label: "Weeks",  list: "weeks",  one: "week",  plural: "weeks" },
+  month: { label: "Months", list: "months", one: "month", plural: "months" },
+};
+const HISTORY_ACCENT = { claude: "#e08a63", codex: "#3ecfa0" };
+// Claude counts requests where Codex counts turns, and so on: switching
+// provider keeps the nearest quantity.
+const HISTORY_TWIN = { reqs: "turns", turns: "reqs", cacheRead: "cached", cached: "cacheRead" };
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+state.history = { open: false, provider: "claude", key: "cost", per: "week", view: "bars", hover: null, model: null };
+try {
+  const kept = JSON.parse(localStorage.getItem(HISTORY_PREFS) || "null") || {};
+  for (const k of ["provider", "key", "per", "view"]) if (typeof kept[k] === "string") state.history[k] = kept[k];
+} catch (e) { /* no storage in this web view: the defaults */ }
+
+function rememberHistory() {
+  const { provider, key, per, view } = state.history;
+  try { localStorage.setItem(HISTORY_PREFS, JSON.stringify({ provider, key, per, view })); } catch (e) { /* not kept */ }
+}
+
+const quantityOf = (provider, key) => QUANTITIES[provider]?.find(([k]) => k === key);
+
+/// What a click on a component opens the history on: its provider and
+/// quantity, by month when it shows a month and by week otherwise.
+function historyFocus(spec, card) {
+  const monthly = new Set(["monthly", "lastMonth", "12mo"]);
+  if (spec?.type === "months") {
+    const src = historyList(spec)[spec.source];
+    if (src) return { provider: src.provider, key: src.key, per: src.per };
+  }
+  const item = spec?.type === "headline" ? METRICS[spec.metric] : spec?.type === "spark" ? SERIES[spec.series] : null;
+  if (item?.family) {
+    const [provider, key] = item.family.split(".");
+    return { provider, key, per: monthly.has(item.period) ? "month" : "week" };
+  }
+  return PROVIDERS[card?.id] ? { provider: card.id } : {};
+}
+
+function openHistory(focus = {}) {
+  if (!state.config || state.customizing) return;
+  const h = state.history;
+  const switching = focus.provider && focus.provider !== h.provider;
+  Object.assign(h, focus, { open: true, hover: null });
+  if (switching && !focus.key && !quantityOf(h.provider, h.key)) h.key = HISTORY_TWIN[h.key] || "cost";
+  rememberHistory();
+  document.body.classList.add("history");
+  $("b-history").classList.add("on");
+  $("b-history").setAttribute("aria-pressed", "true");
+  // Minimised is suspended while the history is open, the way editing does.
+  applyTheme();
+  renderHistory();
+  $("history").scrollTop = 0;
+}
+
+function closeHistory() {
+  if (!state.history.open) return;
+  state.history.open = false;
+  state.history.model = null;
+  document.body.classList.remove("history");
+  $("b-history").classList.remove("on");
+  $("b-history").setAttribute("aria-pressed", "false");
+  $("history").replaceChildren();
+  applyTheme();
+}
+
+const dayIndex = (sec, startSec) => Math.round((sec - startSec) / 86400);
+const periodLength = (per, startSec) => {
+  if (per === "week") return 7;
+  const d = new Date(startSec * 1000);
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+};
+const mean = (list) => (list.length ? list.reduce((n, v) => n + v, 0) / list.length : null);
+
+/// Adds every count in `bin` to `acc`, `f` times over.
+function sumBins(acc, bin, f = 1) {
+  for (const [k, v] of Object.entries(bin)) if (k !== "start" && typeof v === "number") acc[k] = (acc[k] || 0) + v * f;
+  return acc;
+}
+
+/// A period's running total, one point per midnight: x = 0 where it begins and
+/// x = n at the end of its nth day. The period under way stops at now, part-way
+/// through today. Null when the days do not reach back to its start. A rate
+/// (cache hit) runs as the rate so far, not as a sum.
+function runningCurve(provider, key, period, per, days, nowSec) {
+  if (!days.length || days[0].start > period.start + 3600) return null;
+  const length = periodLength(per, period.start);
+  const own = new Map();
+  for (const d of days) {
+    const i = dayIndex(d.start, period.start);
+    if (i >= 0 && i < length) own.set(i, d);
+  }
+  let acc = sumBins({}, days[0], 0);
+  const points = [{ x: 0, v: usageValue(provider, key, acc) }];
+  for (let i = 0; i < length && own.has(i); i++) {
+    const d = own.get(i);
+    acc = sumBins({ ...acc }, d);
+    const next = new Date(d.start * 1000);
+    next.setDate(next.getDate() + 1);
+    const end = +next / 1000;
+    const running = nowSec < end;
+    points.push({ x: running ? i + Math.max(0, (nowSec - d.start) / (end - d.start)) : i + 1, v: usageValue(provider, key, acc) });
+    if (running) break;
+  }
+  return { points, length, total: points.at(-1).v };
+}
+
+/// The curve's value at `x`, straight between its midnights.
+function valueAt(curve, x) {
+  const pts = curve.points;
+  for (let i = 1; i < pts.length; i++) {
+    if (x > pts[i].x) continue;
+    const a = pts[i - 1], b = pts[i];
+    if (a.v == null || b.v == null) return b.v ?? a.v;
+    return a.v + (b.v - a.v) * ((x - a.x) / (b.x - a.x || 1));
+  }
+  return pts.at(-1).v;
+}
+
+/// "+18%", or "+3 pts" for a rate. Empty when there is nothing fair to compare.
+function change(fmt, now, before) {
+  if (now == null || before == null) return "";
+  const sign = (n) => (n > 0 ? "+" : n < 0 ? "−" : "±") + Math.abs(n);
+  if (fmt === "pct") return sign(Math.round((now - before) * 100)) + " pts";
+  if (!before) return "";
+  return sign(Math.round((now / before - 1) * 100)) + "%";
+}
+
+function periodName(per, start, long) {
+  const date = new Date(start * 1000);
+  if (per === "month") return date.toLocaleDateString("en", long ? { month: "long", year: "numeric" } : { month: "short" });
+  if (!long) return "W" + isoWeek(date);
+  const sunday = new Date(date);
+  sunday.setDate(sunday.getDate() + 6);
+  const md = (x) => x.toLocaleDateString("en", { month: "short", day: "numeric" });
+  return `Week ${isoWeek(date)}, ${md(date)} to ${md(sunday)}`;
+}
+
+/// Everything the view draws, worked out once per refresh or choice.
+function historyModel() {
+  const h = state.history, d = state.data;
+  if (!PROVIDERS[h.provider]) h.provider = "claude";
+  if (!quantityOf(h.provider, h.key)) h.key = HISTORY_TWIN[h.key] && quantityOf(h.provider, HISTORY_TWIN[h.key]) ? HISTORY_TWIN[h.key] : "cost";
+  if (!HISTORY_UNITS[h.per]) h.per = "week";
+  if (h.view !== "overlay") h.view = "bars";
+  const unit = HISTORY_UNITS[h.per];
+  const [, quantity, fmt] = quantityOf(h.provider, h.key);
+  const all = d?.[h.provider]?.[unit.list] || [];
+  const days = d?.[h.provider]?.days || [];
+  const nowSec = (d?.ts || Date.now()) / 1000;
+
+  // From the first period the history knows anything about.
+  const first = all.findIndex((p) => p.tracked);
+  const periods = first < 0 ? [] : all.slice(first).map((p, i, list) => {
+    const value = p.tracked ? usageValue(h.provider, h.key, p) : null;
+    const complete = p.tracked && !p.partial;
+    return {
+      start: p.start, tracked: !!p.tracked, partial: !!p.partial, complete, value, current: i === list.length - 1,
+      floor: value != null && fmt !== "pct" && (p.partial || (h.key === "cost" && p.unpricedTokens > 0)),
+      curve: complete ? runningCurve(h.provider, h.key, p, h.per, days, nowSec) : null,
+    };
+  });
+  periods.forEach((p, i) => {
+    const prev = periods[i - 1];
+    p.change = !p.current && prev?.complete && p.tracked ? change(fmt, p.value, prev.value) : "";
+  });
+  const cur = periods.at(-1) || null;
+  const last = periods.length > 1 ? periods.at(-2) : null;
+  const prior = periods.filter((p) => !p.current && p.complete && p.value != null);
+  const shapes = prior.filter((p) => p.curve);
+  const xNow = cur?.curve ? cur.curve.points.at(-1).x : null;
+  const at = (p) => valueAt(p.curve, Math.min(xNow, p.curve.length));
+  return {
+    h, unit, quantity, fmt, periods, cur, last, prior, shapes, xNow, nowSec,
+    avg: mean(prior.map((p) => p.value)),
+    lastByNow: last?.complete && last.curve && xNow != null ? at(last) : null,
+    typicalByNow: shapes.length && xNow != null ? mean(shapes.map(at)) : null,
+    // This period so far, plus what the earlier ones went on to add from the
+    // same point. A rate has no "rest of the period" to add.
+    projection: fmt !== "pct" && cur?.value != null && shapes.length && xNow != null
+      ? cur.value + mean(shapes.map((p) => Math.max(0, p.curve.total - at(p)))) : null,
+    since: d?.history?.since?.[h.provider] || null,
+    accent: state.config?.cards?.find((c) => c.id === h.provider)?.accent || HISTORY_ACCENT[h.provider],
+  };
+}
+
+const svgEl = (markup, width, height, label) =>
+  `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(label)}">${markup}</svg>`;
+
+function barsChart(m, width) {
+  const H = 104, top = 10, bottom = 15, plot = H - top - bottom;
+  const ps = m.periods, n = Math.max(ps.length, 1);
+  const slot = width / n, bw = Math.min(26, Math.max(3, slot * 0.64));
+  const max = Math.max(...ps.map((p) => p.value || 0), m.projection || 0, m.avg || 0, 1e-9);
+  const y = (v) => top + plot - (v / max) * plot;
+  let out = `<line x1="0" x2="${width}" y1="${top + plot + 0.5}" y2="${top + plot + 0.5}" stroke="var(--hair)"/>`;
+  ps.forEach((p, i) => {
+    const cx = slot * i + slot / 2, x = (cx - bw / 2).toFixed(2), v = p.value || 0;
+    const cls = "hbar" + (p.current ? " cur" : "") + (p.partial ? " partial" : "");
+    out += `<g class="${cls}" data-i="${i}"><rect x="${slot * i}" y="0" width="${slot}" height="${H}" fill="transparent"/>`;
+    if (v > 0) out += `<rect class="b" x="${x}" y="${y(v).toFixed(2)}" width="${bw.toFixed(2)}" height="${Math.max(1.5, top + plot - y(v)).toFixed(2)}" rx="1.5"/>`;
+    if (p.current && m.projection > v) {
+      out += `<rect x="${x}" y="${y(m.projection).toFixed(2)}" width="${bw.toFixed(2)}" height="${(y(v) - y(m.projection)).toFixed(2)}" rx="1.5" fill="none" stroke="var(--accent)" stroke-width="1" stroke-dasharray="2 2" opacity="0.75"/>`;
+    }
+    const name = periodName(m.h.per, p.start);
+    const label = m.h.per === "week" && slot < 24 ? name.slice(1) : name;
+    out += `<text x="${cx}" y="${H - 3}" text-anchor="middle"${p.current ? ' class="cur"' : ""}>${label}</text></g>`;
+  });
+  if (m.avg != null && m.prior.length > 1) {
+    const ay = y(m.avg).toFixed(2);
+    out += `<line x1="0" x2="${width}" y1="${ay}" y2="${ay}" class="havg" style="pointer-events:none"/>`;
+    out += `<text x="1" y="${(y(m.avg) - 3).toFixed(2)}" style="pointer-events:none">avg</text>`;
+  }
+  return svgEl(out, width, H, `${m.quantity} by ${m.unit.one}`);
+}
+
+function overlayChart(m, width) {
+  const H = 112, top = 8, bottom = 15, plot = H - top - bottom;
+  const curves = [...m.shapes, m.cur].filter((p) => p?.curve);
+  const L = Math.max(m.h.per === "week" ? 7 : 28, ...curves.map((p) => p.curve.length));
+  const avgPts = [];
+  if (m.shapes.length > 1) {
+    for (let x = 0; x <= L; x++) avgPts.push({ x, v: mean(m.shapes.map((p) => valueAt(p.curve, Math.min(x, p.curve.length)))) });
+  }
+  const max = Math.max(...curves.flatMap((p) => p.curve.points.map((pt) => pt.v || 0)), ...avgPts.map((pt) => pt.v || 0), 1e-9);
+  const sx = (x) => (x / L) * width, sy = (v) => top + plot - (v / max) * plot;
+  const path = (pts) => pts.filter((pt) => pt.v != null).map((pt, i) => (i ? "L" : "M") + sx(pt.x).toFixed(2) + " " + sy(pt.v).toFixed(2)).join("");
+  let out = `<line x1="0" x2="${width}" y1="${top + plot + 0.5}" y2="${top + plot + 0.5}" stroke="var(--hair)"/>`;
+  // A faint rule at each midnight for a week, each Monday-length stretch for a month.
+  for (let x = m.h.per === "week" ? 1 : 7; x < L; x += m.h.per === "week" ? 1 : 7) {
+    out += `<line x1="${sx(x).toFixed(2)}" x2="${sx(x).toFixed(2)}" y1="${top}" y2="${top + plot}" stroke="var(--hair)" stroke-dasharray="1 3"/>`;
+  }
+  if (m.h.per === "week") WEEKDAYS.forEach((d, i) => { out += `<text x="${sx(i + 0.5).toFixed(2)}" y="${H - 3}" text-anchor="middle">${d}</text>`; });
+  else for (const day of [1, 8, 15, 22, 29]) if (day <= L) out += `<text x="${sx(day - 0.5).toFixed(2)}" y="${H - 3}" text-anchor="middle">${day}</text>`;
+  const index = (p) => m.periods.indexOf(p);
+  for (const p of m.shapes) if (p !== m.last) out += `<path class="hline" data-i="${index(p)}" d="${path(p.curve.points)}"/>`;
+  if (avgPts.length) out += `<path class="havg" d="${path(avgPts)}"/>`;
+  if (m.last?.curve && m.shapes.includes(m.last)) out += `<path class="hline last" data-i="${index(m.last)}" d="${path(m.last.curve.points)}"/>`;
+  if (m.cur?.curve) {
+    const end = m.cur.curve.points.at(-1);
+    out += `<line x1="${sx(end.x).toFixed(2)}" x2="${sx(end.x).toFixed(2)}" y1="${top}" y2="${top + plot}" stroke="var(--accent)" opacity="0.3"/>`;
+    out += `<path class="hline cur" data-i="${index(m.cur)}" d="${path(m.cur.curve.points)}"/>`;
+    if (end.v != null) out += `<circle cx="${sx(end.x).toFixed(2)}" cy="${sy(end.v).toFixed(2)}" r="2.6" fill="var(--accent)"/>`;
+  }
+  out += `<line class="hcross" x1="0" x2="0" y1="${top}" y2="${top + plot}" stroke="var(--text)" opacity="0" stroke-width="0.6"/>`;
+  out += `<rect class="hhit" x="0" y="0" width="${width}" height="${H}" fill="transparent"/>`;
+  m.overlay = { sx, L, avgPts };
+  return svgEl(out, width, H, `${m.quantity}, running total by ${m.h.per === "week" ? "weekday" : "day of the month"}`);
+}
+
+/// The line over the chart: the hovered period or day, otherwise the one under way.
+function historyReadout(m, hover) {
+  const f = (v) => FMT[m.fmt](v);
+  // The overlay's line is short enough for a narrow panel: "End of Wed: this
+  // $412 · last $380 · avg $350".
+  const lines = (when, mine, theirs, avg) => [
+    `${when}: this ${mine}`,
+    theirs != null && m.last?.curve && m.shapes.includes(m.last) ? `last ${f(theirs)}` : null,
+    avg != null ? `avg ${f(avg)}` : null,
+  ].filter(Boolean).join(" · ");
+  if (m.h.view === "overlay" && hover?.x != null) {
+    const x = hover.x;
+    const mine = !m.cur?.curve ? "—" : x <= Math.ceil(m.xNow) ? f(valueAt(m.cur.curve, Math.min(x, m.xNow))) + (x > m.xNow ? " so far" : "") : "not yet";
+    return lines(m.h.per === "week" ? `End of ${WEEKDAYS[x - 1]}` : `Day ${x}`, mine,
+      m.last?.curve ? valueAt(m.last.curve, Math.min(x, m.last.curve.length)) : null,
+      m.overlay?.avgPts.length ? valueAt({ points: m.overlay.avgPts }, x) : null);
+  }
+  const i = hover?.i ?? m.periods.length - 1;
+  const p = m.periods[i];
+  if (!p) return "";
+  if (m.h.view === "overlay" && hover?.i == null) {
+    return lines("By now", f(m.cur?.value), m.lastByNow, m.shapes.length > 1 ? m.typicalByNow : null);
+  }
+  const value = p.tracked ? f(p.value) + (p.floor ? "+" : "") : "no data";
+  const prev = m.periods[i - 1];
+  const vs = p.change ? ` · ${p.change} vs ${periodName(m.h.per, prev.start)}` : "";
+  return `${periodName(m.h.per, p.start, true)} · ${value}${p.current ? " so far" : ""}${vs}`;
+}
+
+function setHistoryHover(hover) {
+  const m = state.history.model;
+  if (!m) return;
+  state.history.hover = hover;
+  const host = $("history");
+  const i = hover?.i;
+  host.querySelectorAll(".hbar, .hlist .mrow, .hline").forEach((n) => n.classList.toggle("hot", i != null && n.dataset.i === String(i)));
+  const cross = host.querySelector(".hcross");
+  if (cross) {
+    const x = hover?.x != null ? m.overlay.sx(hover.x).toFixed(2) : 0;
+    cross.setAttribute("x1", x);
+    cross.setAttribute("x2", x);
+    cross.setAttribute("opacity", hover?.x != null ? "0.35" : "0");
+  }
+  host.querySelector(".hreadout").textContent = historyReadout(m, hover);
+}
+
+function renderHistory() {
+  const host = $("history");
+  if (!state.history.open || !state.data || state.data.error) return;
+  const m = historyModel();
+  const h = m.h;
+  state.history.model = m;
+  host.style.setProperty("--accent", m.accent);
+  host.replaceChildren();
+  const commit = (change) => { Object.assign(h, change, { hover: null }); rememberHistory(); renderHistory(); };
+
+  const seg = (options, current, onPick, label) => {
+    const box = el("div", "seg");
+    box.setAttribute("role", "group");
+    box.setAttribute("aria-label", label);
+    for (const [value, text] of options) {
+      const b = el("button", value === current ? "sel" : null, text);
+      b.setAttribute("aria-pressed", String(value === current));
+      b.onclick = () => onPick(value);
+      box.append(b);
+    }
+    return box;
+  };
+
+  // Which provider, which quantity, weeks or months.
+  const head = el("div", "hhead");
+  const back = el("button", "hback");
+  back.title = "Back to the panel (Esc)";
+  back.setAttribute("aria-label", "Back to the panel");
+  back.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg>';
+  back.onclick = closeHistory;
+  head.append(back);
+  const used = (p) => ["weeks", "months"].some((l) => (state.data[p]?.[l] || []).some((x) => x.tracked && x.tokens > 0));
+  const providers = Object.keys(PROVIDERS).filter((p) => p === h.provider || used(p));
+  if (providers.length > 1) {
+    head.append(seg(providers.map((p) => [p, PROVIDERS[p]]), h.provider, (p) => {
+      commit({ provider: p, key: quantityOf(p, h.key) ? h.key : HISTORY_TWIN[h.key] && quantityOf(p, HISTORY_TWIN[h.key]) ? HISTORY_TWIN[h.key] : "cost" });
+    }, "Provider"));
+  } else {
+    head.append(el("span", "dot"), el("span", "cname", PROVIDERS[h.provider]));
+  }
+  head.append(picker(QUANTITIES[h.provider].map(([k, label]) => [k, label]), h.key, (k) => commit({ key: k }), "What each period shows"));
+  head.append(el("span", "spacer"), seg(Object.entries(HISTORY_UNITS).map(([k, u]) => [k, u.label]), h.per, (per) => commit({ per }), "Weeks or months"));
+  host.append(head);
+
+  if (!m.periods.length) {
+    host.append(el("div", "hempty", `No ${m.unit.one} in the usage history has any ${PROVIDERS[h.provider]} usage yet.`));
+    reportHeight();
+    return;
+  }
+
+  // This period, the last one and a typical one, then how this one is pacing.
+  const f = (v) => FMT[m.fmt](v);
+  const sum = el("div", "hsum");
+  const fig = (value, caption, big, title) => {
+    const box = el("div", "hfig");
+    box.append(el("span", big ? "big" : "hmid", value), el("span", "bigsub", caption));
+    if (title) box.title = title;
+    sum.append(box);
+  };
+  fig(f(m.cur.value) + (m.cur.floor ? "+" : ""), `this ${m.unit.one}`, true, periodName(h.per, m.cur.start, true) + ", so far");
+  if (m.last) fig(m.last.tracked ? f(m.last.value) + (m.last.floor ? "+" : "") : "—", `last ${m.unit.one}`, false,
+    periodName(h.per, m.last.start, true) + (m.last.partial ? ". " + historyPartial(m.unit.one) : ""));
+  if (m.avg != null && m.prior.length > 1) fig(f(m.avg), `avg of ${m.prior.length} ${m.unit.plural}`, false,
+    `The average of the last ${m.prior.length} complete ${m.unit.plural} in the history, this one left out.`);
+  sum.append(seg([["bars", "Bars"], ["overlay", "Overlay"]], h.view, (view) => commit({ view }), "Chart"));
+  host.append(sum);
+
+  const pace = el("div", "hpace");
+  const vsLast = change(m.fmt, m.cur.value, m.lastByNow);
+  if (vsLast) {
+    pace.append(el("b", null, vsLast), document.createTextNode(` vs last ${m.unit.one} at this point`));
+    pace.title = `Last ${m.unit.one} had reached ${f(m.lastByNow)} by the same point.`;
+  }
+  if (m.projection != null) {
+    if (vsLast) pace.append(document.createTextNode(" · "));
+    pace.append(document.createTextNode("on track for "), el("b", null, "≈" + f(m.projection)));
+    pace.title = (pace.title ? pace.title + "\n" : "") + `On track: this ${m.unit.one} so far, plus what the last ${m.shapes.length} complete ${m.shapes.length === 1 ? m.unit.one : m.unit.plural} added from this point on, on average.`;
+  }
+  if (pace.childNodes.length) host.append(pace);
+
+  // The chart: one bar per period, or the periods laid over each other.
+  host.append(el("div", "hreadout"));
+  const chart = el("div", "hchart");
+  host.append(chart);
+  const width = Math.max(200, Math.floor(chart.getBoundingClientRect().width) || 330);
+  if (h.view === "overlay" && !m.cur.curve) {
+    chart.append(el("div", "hempty", "The overlay needs the daily totals the collector now sends; they arrive with the next refresh."));
+  } else if (h.view === "overlay") {
+    chart.innerHTML = overlayChart(m, width);
+    const legend = el("div", "hlegend");
+    const item = (cls, text) => { const s = el("span"); s.append(el("i", cls), document.createTextNode(text)); legend.append(s); };
+    item("", `this ${m.unit.one}`);
+    if (m.last?.curve && m.shapes.includes(m.last)) item("last", `last ${m.unit.one}`);
+    if (m.overlay.avgPts.length) item("avg", `avg of ${m.shapes.length} ${m.unit.plural}`);
+    if (m.shapes.filter((p) => p !== m.last).length) item("older", `earlier ${m.unit.plural}`);
+    host.append(legend);
+    const hit = chart.querySelector(".hhit");
+    hit.addEventListener("mousemove", (e) => {
+      const r = hit.getBoundingClientRect();
+      const x = Math.min(m.overlay.L, Math.max(1, Math.round(((e.clientX - r.left) / r.width) * m.overlay.L)));
+      if (state.history.hover?.x !== x) setHistoryHover({ x });
+    });
+    hit.addEventListener("mouseleave", () => setHistoryHover(null));
+  } else {
+    chart.innerHTML = barsChart(m, width);
+  }
+
+  // Every period, newest first, with its change on the one before.
+  const list = el("div", "mlist hlist");
+  const max = Math.max(...m.periods.map((p) => p.value || 0), 1e-9);
+  const thisYear = new Date().getFullYear();
+  [...m.periods].reverse().forEach((p) => {
+    const i = m.periods.indexOf(p);
+    const row = el("div", "mrow" + (p.current ? " now" : "") + (p.partial ? " partial" : ""));
+    row.dataset.i = i;
+    const date = new Date(p.start * 1000);
+    const name = el("span", "mmon", periodName(h.per, p.start));
+    if (h.per === "week") name.append(el("small", null, date.toLocaleDateString("en", { month: "short", day: "numeric" })));
+    else if (date.getFullYear() !== thisYear) name.append(el("small", null, "’" + String(date.getFullYear()).slice(2)));
+    const track = el("span", "mtrack");
+    const fill = el("i");
+    fill.style.width = (p.value > 0 ? Math.max(2, (p.value / max) * 100) : 0) + "%";
+    track.append(fill);
+    const value = el("span", "mval", p.tracked ? f(p.value) + (p.floor ? "+" : "") : "—");
+    const chg = el("span", "hchg", p.current ? "so far" : p.change);
+    row.append(name, track, value, chg);
+    row.title = historyReadout(m, { i }) + (p.partial ? ". " + historyPartial(m.unit.one) : "");
+    list.append(row);
+  });
+  host.append(list);
+
+  const notes = [];
+  if (m.since) notes.push(`Kept on this Mac since ${new Date(m.since * 1000).toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric" })}.`);
+  if (m.periods.some((p) => p.floor)) notes.push("A + marks a lower bound: the period began before the history, or holds usage without a published price.");
+  if (h.provider === "codex" && h.key === "cost") notes.push("Codex cost is an estimate at published API prices, not your bill.");
+  if (notes.length) host.append(el("div", "hnote", notes.join(" ")));
+
+  // Hovering a bar, a line or a row names that period over the chart.
+  host.querySelectorAll(".hbar, .hlist .mrow, .hline").forEach((n) => {
+    n.addEventListener("mouseenter", () => setHistoryHover({ i: Number(n.dataset.i) }));
+    n.addEventListener("mouseleave", () => setHistoryHover(null));
+  });
+  setHistoryHover(state.history.hover);
+  reportHeight();
+}
+
+window.hudOpenHistory = (focus) => openHistory(focus || {});
+
+// ===================================================================== theme
+
+let mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+mediaQuery.addEventListener("change", () => applyTheme());
+
+function applyTheme() {
+  const t = (state.config && state.config.theme) || {};
+  const root = document.documentElement;
+  const scheme = t.scheme === "auto" || !t.scheme ? (mediaQuery.matches ? "dark" : "light") : t.scheme;
+  root.dataset.scheme = scheme;
+  root.dataset.density = t.density || "normal";
+  // Editing always draws the whole layout - you cannot move what is not on
+  // screen - so minimised is suspended rather than fought with in CSS. The
+  // history view suspends it the same way.
+  root.dataset.collapsed = t.collapsed && !state.customizing && !state.history.open ? "1" : "0";
+  root.style.setProperty("--preview-width", (t.width || 380) + "px");
+  root.dataset.cmode = t.collapsedMode || "bars";
+  root.style.setProperty("--radius", (t.radius != null ? t.radius : 14) + "px");
+  // Opacity is the panel's own darkness, not the window's alpha. The vibrancy
+  // view samples the desktop, so over a bright wallpaper the raw material reads
+  // white; the fix is to control how much dark veil sits on top of it, never to
+  // fade the whole window (which only lets more of that bright desktop through).
+  // The slider's 40-100% maps onto a veil that stays translucent at the bottom
+  // and goes nearly solid at the top, so the top can never wash out to white.
+  const op = t.opacity == null ? 1 : Math.max(0.4, Math.min(1, t.opacity));
+  const x = (op - 0.4) / 0.6;                       // 0 at 40%, 1 at 100%
+  const a = (0.22 + 0.70 * x).toFixed(3);           // 0.22 .. 0.92
+  const veil = scheme === "light" ? `rgba(244, 245, 248, ${a})` : `rgba(16, 16, 18, ${a})`;
+  root.style.setProperty("--veil", veil);
+  $("b-collapse").classList.toggle("on", !!t.collapsed);
+  syncLivePreview();
+  reportHeight();
+}
+
+/// Window-level properties live in AppKit, not CSS - push them across as they
+/// change so a slider drag feels immediate instead of waiting for a save.
+function pushTheme() {
+  bridge({ action: "theme", theme: state.config.theme });
+}
+
+// ====================================================================== data
+
+function applyData() {
+  if (!state.data || state.data.error) return;
+  for (const u of updaters) {
+    try { u(state.data); } catch (e) { /* one bad widget must not blank the panel */ }
+  }
+  fitHeaders();
+  tickAge();
+  syncLivePreview();
+  reportHeight();
+}
+
+/// Header items sit side by side on one baseline while they fit. When a narrow
+/// panel runs out of room, flex would shrink them and break a caption in two,
+/// lifting one number above the other; instead the header goes "tight" and every
+/// caption moves under its number. Measured, because CSS cannot compare the
+/// available width with what the numbers happen to need today.
+function fitHeaders(root = document) {
+  for (const rh of root.querySelectorAll(".rh")) {
+    rh.classList.remove("tight");
+    const headlines = [...rh.querySelectorAll(".headline")];
+    if (headlines.some((h) => h.scrollWidth > h.clientWidth + 1)) rh.classList.add("tight");
+  }
+}
+window.addEventListener("resize", () => { fitHeaders(); if (state.history.open) renderHistory(); reportHeight(); });
+
+function tickAge() {
+  if (!state.data || state.data.error) return;
+  const age = Math.max(0, Math.floor((Date.now() - state.data.ts) / 1000));
+  $("age").textContent = age < 5 ? "just now" : FMT.dur(age) + " ago";
+}
+
+let lastHeight = 0;
+function reportHeight() {
+  const h = Math.ceil($("root").getBoundingClientRect().height);
+  if (h && h !== lastHeight) {
+    lastHeight = h;
+    bridge({ action: "height", value: h });
+  }
+}
+
+// ====================================================================== save
+
+let saveTimer = null;
+let savedSnapshot = null;
+function updateSaveStatus() {
+  $("save-status").textContent = state.savePending ? "Saving changes…" : "Changes saved automatically";
+  $("b-undo").disabled = !state.undo.length;
+}
+function flushSave() {
+  clearTimeout(saveTimer);
+  bridge({ action: "saveConfig", config: state.config });
+  state.savePending = false;
+  updateSaveStatus();
+}
+function save() {
+  const snapshot = JSON.stringify(state.config);
+  if (savedSnapshot && snapshot !== savedSnapshot) {
+    state.undo.push(savedSnapshot);
+    state.undo = state.undo.slice(-30);
+  }
+  syncLivePreview();
+  savedSnapshot = snapshot;
+  state.savePending = true;
+  updateSaveStatus();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushSave, 350);
+}
+$("b-undo").onclick = () => {
+  if (!state.undo.length) return;
+  state.config = JSON.parse(state.undo.pop());
+  savedSnapshot = JSON.stringify(state.config);
+  state.selected = null;
+  applyTheme(); pushTheme(); buildLayout();
+  if (state.drawer) buildDrawer();
+  flushSave();
+};
+
+// ================================================================== entry in
+
+window.hudUpdate = (payload) => {
+  $("b-refresh").classList.remove("spin");
+
+  if (payload.error) {
+    state.data = payload;
+    $("err").textContent = payload.error;
+    $("err").classList.add("on");
+    reportHeight();
+    return;
+  }
+  $("err").classList.remove("on");
+
+  const incoming = payload.config;
+  const first = !state.config;
+  // Never let a scheduled refresh overwrite edits that are still in flight.
+  const adopt = incoming && !state.customizing && !state.savePending &&
+    JSON.stringify(incoming) !== JSON.stringify(state.config);
+
+  state.data = payload;
+  if (first || adopt) {
+    state.config = incoming;
+    savedSnapshot = JSON.stringify(incoming);
+    state.undo = [];
+    applyTheme();
+    buildLayout();
+    if (state.drawer) buildDrawer();
+  } else {
+    applyData();
+  }
+  if (state.history.open) renderHistory();
+};
+window.hudBusy = () => $("b-refresh").classList.add("spin");
+
+// The native window and browser previews share these entry points.
+window.hudSetEditing = (on) => setEditing(!!on);
+window.hudOpenDrawer = () => openCustomization("appearance");
+window.hudOpenSaved = () => openCustomization("saved");
+window.hudApplySavedConfig = (name) => applySavedConfig(name);
+window.hudSavedConfigs = (list) => {
+  state.saved = Array.isArray(list) ? list.filter((s) => s && typeof s.name === "string") : [];
+  if (state.customizing && state.tab === "saved") buildSaved();
+};
+window.hudSetBounds = ({ height }) => {
+  document.documentElement.style.setProperty("--available-height", Math.max(160, height) + "px");
+  reportHeight();
+};
+function openCustomization(tab = "layout") {
+  if (!state.config) return;
+  closeHistory();
+  const entering = !state.customizing;
+  state.customizing = true;
+  tab = ["appearance", "saved"].includes(tab) ? tab : "layout";
+  state.tab = tab;
+  state.editing = tab === "layout";
+  state.drawer = tab !== "layout";
+  document.body.classList.add("customizing");
+  document.body.classList.toggle("editing", state.editing);
+  document.body.dataset.tab = tab;
+  $("drawer").classList.toggle("open", state.drawer);
+  document.querySelectorAll("#custom-tabs button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tab === tab)));
+  $("workspace-note").textContent = {
+    layout: "Select a component to edit. Drag the grip to reorder.",
+    appearance: "Tune the look, size and behavior of your HUD.",
+    saved: "Keep layouts under a name and switch between them.",
+  }[tab];
+  if (entering) bridge({ action: "editing", value: true });
+  applyTheme(); buildLayout();
+  if (state.drawer) buildDrawer();
+  updateSaveStatus();
+  reportHeight();
+}
+function setEditing(on) {
+  if (drag) endDrag();
+  if (on) return openCustomization("layout");
+  if (!state.config) return;
+  state.customizing = state.editing = state.drawer = false;
+  document.body.classList.remove("customizing", "editing");
+  $("drawer").classList.remove("open");
+  flushSave();
+  bridge({ action: "editing", value: false });
+  applyTheme(); buildLayout(); reportHeight();
+  $("b-edit").focus({ preventScroll: true });
+}
+$("b-refresh").onclick = () => { $("b-refresh").classList.add("spin"); bridge({ action: "refresh" }); };
+$("b-hide").onclick = () => bridge({ action: "hide" });
+$("b-edit").onclick = () => openCustomization("layout");
+$("b-drawer").onclick = () => openCustomization("appearance");
+$("b-done").onclick = () => setEditing(false);
+$("b-history").onclick = () => (state.history.open ? closeHistory() : openHistory());
+document.querySelectorAll("#custom-tabs button").forEach(b => b.onclick = () => openCustomization(b.dataset.tab));
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && state.customizing && !e.defaultPrevented) {
+    e.preventDefault(); setEditing(false);
+  } else if (e.key === "Escape" && state.history.open && !e.defaultPrevented) {
+    e.preventDefault(); closeHistory();
+  }
+});
+new ResizeObserver(reportHeight).observe($("root"));
+
+$("b-collapse").onclick = () => {
+  const t = state.config.theme;
+  // From the history, minimising means back to the panel, minimised.
+  t.collapsed = state.history.open || !t.collapsed;
+  closeHistory();
+  applyTheme();
+  save();
+};
+
+// Drag the window from any inert surface. Controls and the row grips opt out.
+// A big number, sparkline or history list opens its history on a click, and
+// still moves the panel once the mouse travels before it is let go.
+let pressed = null;
+document.addEventListener("mousedown", (e) => {
+  if (e.button !== 0) return;
+  if (e.target.closest("button, select, input, .grip") || (state.customizing && !e.target.closest("#custom-head"))) return;
+  const wrap = !state.customizing && e.target.closest("#cards .wrap[data-history]");
+  if (wrap) { pressed = { wrap, x: e.clientX, y: e.clientY }; return; }
+  bridge({ action: "drag" });
+});
+window.addEventListener("mousemove", (e) => {
+  if (!pressed) return;
+  if (!(e.buttons & 1)) { pressed = null; return; }
+  if (Math.hypot(e.clientX - pressed.x, e.clientY - pressed.y) > 3) { pressed = null; bridge({ action: "drag" }); }
+});
+window.addEventListener("mouseup", () => {
+  if (!pressed) return;
+  const { wrap } = pressed;
+  pressed = null;
+  if (wrap.isConnected) openHistory(historyFocus(wrap.__spec, wrap.__ctx?.card));
+});
+
+// Exposed for the test harness and for poking at things in a debugger.
+window.hudState = state;
+
+setInterval(() => { tickAge(); applyData(); }, 1000);
+bridge({ action: "ready" });
+reportHeight();
+</script>
